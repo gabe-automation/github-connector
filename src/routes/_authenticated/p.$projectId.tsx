@@ -217,19 +217,23 @@ function EditorPage() {
   }
   useEffect(() => { select(null); }, [page?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function addBlock(type: BlockType, at?: { x: number; y: number }, copy?: NodeView) {
+  async function addBlock(type: BlockType, at?: { x: number; y: number }, copy?: NodeView, parentId?: string) {
     if (!page) return;
     const def = BLOCKS[type];
     const id = crypto.randomUUID();
+    const parent = parentId ? views.find((v) => v.id === parentId) : undefined;
+    const siblings = parent ? views.filter((v) => v.parent === parent.id) : views.filter((v) => !v.parent || !views.some((p) => p.id === v.parent));
     const maxOrder = views.reduce<string | null>((m, v) => (!m || v.order > m ? v.order : m), null);
     const pageW = BREAKPOINTS.desktop.width;
-    const w = copy ? copy.geo.desktop.w : Math.min(def.w, pageW);
-    const h = copy ? copy.geo.desktop.h : def.h;
-    const lowest = views.reduce((m, v) => Math.max(m, v.geo.desktop.y + v.geo.desktop.h), 0);
+    const boundW = parent ? parent.geo.desktop.w : pageW;
+    const boundH = parent ? parent.geo.desktop.h : Infinity;
+    const w = copy ? copy.geo.desktop.w : Math.min(def.w, boundW);
+    const h = copy ? copy.geo.desktop.h : Math.min(def.h, boundH);
+    const lowest = siblings.reduce((m, v) => Math.max(m, v.geo.desktop.y + v.geo.desktop.h), 0);
     const G = prefs.grid;
-    const useCursor = at && bp === "desktop" && prefs.drop === "cursor";
+    const useCursor = at && bp === "desktop" && (parent ? true : prefs.drop === "cursor");
     const sg = (v: number) => (G ? Math.round(v / G) * G : v);
-    const x = copy ? copy.geo.desktop.x + 24 : useCursor ? sg(Math.round(at.x - w / 2)) : prefs.drop === "stack" ? 0 : Math.round((pageW - w) / 2);
+    const x = copy ? copy.geo.desktop.x + 24 : useCursor ? sg(Math.round(at.x - w / 2)) : prefs.drop === "stack" ? 0 : Math.round((boundW - w) / 2);
     const y = copy ? copy.geo.desktop.y + 24 : useCursor ? sg(Math.round(at.y - h / 2)) : sg(lowest + 32);
     const extra: Record<string, unknown> = {};
     if (copy) {
@@ -238,16 +242,44 @@ function EditorPage() {
       for (const [k, v] of Object.entries(copy.box)) extra[`c.${k}`] = v;
       for (const [k, v] of Object.entries(copy.style)) extra[`s.${k}`] = v;
     }
+    const gx = Math.max(0, Math.min(boundW - w, x));
+    const gy = Math.max(0, Math.min(Math.max(0, boundH - h), y));
+    const geo: Record<string, unknown> = { "x@desktop": gx, "y@desktop": gy, "w@desktop": w, "h@desktop": h };
+    if (parent) {
+      // Children use container-relative coordinates on every breakpoint.
+      for (const b of ["tablet", "mobile"] as const) {
+        geo[`x@${b}`] = gx; geo[`y@${b}`] = gy; geo[`w@${b}`] = w; geo[`h@${b}`] = h;
+      }
+    }
     await room.op(
       id,
       {
-        type, parent: null, page: page.id, order: keyBetween(maxOrder, null), deleted: false,
-        "x@desktop": Math.max(0, Math.min(pageW - w, x)), "y@desktop": Math.max(0, y), "w@desktop": w, "h@desktop": h, ...extra,
+        type, parent: parent?.id ?? null, page: page.id, order: keyBetween(maxOrder, null), deleted: false,
+        ...geo, ...extra,
       },
       copy ? "duplicated" : "created",
-      def.name,
+      parent ? `${def.name} in ${BLOCKS[parent.type].name}` : def.name,
     );
-    if (copy) select(id);
+    if (copy || parent) select(id);
+  }
+
+  /** Delete a block and everything nested inside it. */
+  async function removeNode(id: string) {
+    const byParent = new Map<string | null, string[]>();
+    for (const v of views) {
+      const arr = byParent.get(v.parent) ?? [];
+      arr.push(v.id);
+      byParent.set(v.parent, arr);
+    }
+    const queue = [id];
+    const all: string[] = [];
+    while (queue.length) {
+      const cur = queue.pop()!;
+      all.push(cur);
+      for (const k of byParent.get(cur) ?? []) queue.push(k);
+    }
+    const label = labelOf(views.find((v) => v.id === id) ?? ({ type: "text", text: "" } as NodeView));
+    await Promise.all(all.map((n) => room.op(n, { deleted: true }, "deleted", all.length > 1 ? `${label} (+${all.length - 1} inside)` : label)));
   }
 
   function commitGeo(id: string, g: Geo, kind: "moved" | "resized") {
