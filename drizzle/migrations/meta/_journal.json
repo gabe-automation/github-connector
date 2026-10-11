@@ -36,6 +36,13 @@
       "when": 1790735883108,
       "tag": "0004_published_site_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791698573677,
+      "tag": "0005_apply_webcraft_schema",
+      "breakpoints": true
     }
   ]
 }
