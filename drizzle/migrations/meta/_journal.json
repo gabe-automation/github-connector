@@ -43,6 +43,13 @@
       "when": 1791698573677,
       "tag": "0005_apply_webcraft_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791698603782,
+      "tag": "0006_pages_table",
+      "breakpoints": true
     }
   ]
 }
