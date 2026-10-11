@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { BLOCK_CSS, BREAKPOINTS, blockHtml, styleObj, themeVars, type BlockType, type Breakpoint, type Theme } from "@/lib/blocks";
+import { BLOCK_CSS, BREAKPOINTS, blockHtml, isContainer, styleObj, themeVars, type BlockType, type Breakpoint, type Theme } from "@/lib/blocks";
 import { pageHeight, type Geo, type NodeView } from "@/lib/model";
 import type { Cursor, Lease, NodeLock } from "@/lib/useRoom";
 import { snapGrid, type DragPrefs } from "@/lib/dragPrefs";
@@ -23,7 +23,7 @@ type Props = {
   onCommit: (id: string, g: Geo, kind: "moved" | "resized") => void;
   onLiveDrag: (id: string, g: Geo, done?: boolean) => void;
   onCursor: (x: number, y: number) => void;
-  onDropBlock: (type: BlockType, x: number, y: number) => void;
+  onDropBlock: (type: BlockType, x: number, y: number, parentId?: string) => void;
 };
 
 const SNAP = 6;
@@ -34,25 +34,85 @@ export function Canvas(p: Props) {
   const pageRef = useRef<HTMLDivElement>(null);
   const [local, setLocal] = useState<{ id: string; g: Geo } | null>(null);
   const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] });
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const toPage = (e: { clientX: number; clientY: number }) => {
     const r = pageRef.current!.getBoundingClientRect();
     return { x: (e.clientX - r.left) / p.scale, y: (e.clientY - r.top) / p.scale };
   };
 
-  function snap(id: string, g: Geo, resizing: boolean, free = false): { g: Geo; gx: number[]; gy: number[] } {
-    if (free || (!p.prefs.guides && !p.prefs.grid)) {
-      const o = { x: Math.round(g.x), y: Math.max(0, Math.round(g.y)), w: Math.max(24, Math.round(g.w)), h: Math.max(16, Math.round(g.h)) };
-      return { g: o, gx: [], gy: [] };
+  const ids = new Set(p.nodes.map((n) => n.id));
+  const childMap = new Map<string, NodeView[]>();
+  const top: NodeView[] = [];
+  for (const n of p.nodes) {
+    if (n.parent && ids.has(n.parent)) {
+      const arr = childMap.get(n.parent) ?? [];
+      arr.push(n);
+      childMap.set(n.parent, arr);
+    } else {
+      top.push(n);
+    }
+  }
+  const byOrder = (a: NodeView, b: NodeView) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0);
+  top.sort(byOrder);
+  for (const arr of childMap.values()) arr.sort(byOrder);
+
+  const geoOf = (n: NodeView): Geo => {
+    const remote = p.drags[n.id];
+    if (local?.id === n.id) return local.g;
+    if (remote && remote.bp === p.bp) return remote;
+    return n.geo[p.bp];
+  };
+
+  /** Absolute page position of a node, walking up parents. */
+  const absGeo = (n: NodeView): Geo => {
+    const g = geoOf(n);
+    let x = g.x, y = g.y;
+    let cur = n;
+    const seen = new Set<string>();
+    while (cur.parent && ids.has(cur.parent) && !seen.has(cur.parent)) {
+      seen.add(cur.parent);
+      const par = p.nodes.find((m) => m.id === cur.parent)!;
+      const pg = geoOf(par);
+      x += pg.x; y += pg.y;
+      cur = par;
+    }
+    return { x, y, w: g.w, h: g.h };
+  };
+
+  /** Topmost container whose absolute box contains the page point. */
+  const containerAt = (x: number, y: number): NodeView | null => {
+    let best: NodeView | null = null;
+    for (const n of p.nodes) {
+      if (!isContainer(n.type)) continue;
+      const g = absGeo(n);
+      if (x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h) best = n; // later = higher z
+    }
+    return best;
+  };
+
+  function snap(id: string, g: Geo, resizing: boolean, free = false, bounds?: Geo): { g: Geo; gx: number[]; gy: number[] } {
+    const clamp = (o: Geo): Geo => {
+      const out = { x: Math.round(o.x), y: Math.max(0, Math.round(o.y)), w: Math.max(24, Math.round(o.w)), h: Math.max(16, Math.round(o.h)) };
+      if (bounds) {
+        out.w = Math.min(out.w, bounds.w);
+        out.h = Math.min(out.h, bounds.h);
+        out.x = Math.max(0, Math.min(out.x, bounds.w - out.w));
+        out.y = Math.max(0, Math.min(out.y, bounds.h - out.h));
+      }
+      return out;
+    };
+    if (free || bounds || (!p.prefs.guides && !p.prefs.grid)) {
+      return { g: clamp(g), gx: [], gy: [] };
     }
     if (!p.prefs.guides) {
       const G = p.prefs.grid;
       const o = resizing ? { ...g, w: snapGrid(g.x + g.w, G) - g.x, h: snapGrid(g.y + g.h, G) - g.y } : { ...g, x: snapGrid(g.x, G), y: snapGrid(g.y, G) };
-      return { g: { x: Math.round(o.x), y: Math.max(0, Math.round(o.y)), w: Math.max(24, Math.round(o.w)), h: Math.max(16, Math.round(o.h)) }, gx: [], gy: [] };
+      return { g: clamp(o), gx: [], gy: [] };
     }
     const xs: number[] = [0, pageW, pageW / 2];
     const ys: number[] = [0];
-    for (const n of p.nodes) {
+    for (const n of top) {
       if (n.id === id) continue;
       const o = n.geo[p.bp];
       xs.push(o.x, o.x + o.w, o.x + o.w / 2);
@@ -81,9 +141,7 @@ export function Canvas(p: Props) {
       tryAxis([g.x, g.x + g.w, g.x + g.w / 2], xs, (d) => (out.x += d), gx);
       tryAxis([g.y, g.y + g.h, g.y + g.h / 2], ys, (d) => (out.y += d), gy);
     }
-    out.x = Math.round(out.x); out.y = Math.max(0, Math.round(out.y));
-    out.w = Math.max(24, Math.round(out.w)); out.h = Math.max(16, Math.round(out.h));
-    return { g: out, gx, gy };
+    return { g: clamp(out), gx, gy };
   }
 
   function startDrag(e: React.PointerEvent, n: NodeView, resizing: boolean) {
@@ -94,6 +152,8 @@ export function Canvas(p: Props) {
     if (nl && !p.canOverride(nl)) return;
     const start = toPage(e);
     const orig = n.geo[p.bp];
+    const parentView = n.parent && ids.has(n.parent) ? p.nodes.find((m) => m.id === n.parent) : undefined;
+    const bounds = parentView ? parentView.geo[p.bp] : undefined;
     let last = orig;
     let moved = false;
     const move = (ev: PointerEvent) => {
@@ -104,7 +164,7 @@ export function Canvas(p: Props) {
       if (!moved && Math.abs(dx) + Math.abs(dy) < 3) return;
       moved = true;
       const raw = resizing ? { ...orig, w: orig.w + dx, h: orig.h + dy } : { ...orig, x: orig.x + dx, y: orig.y + dy };
-      const s = snap(n.id, raw, resizing, ev.altKey);
+      const s = snap(n.id, raw, resizing, ev.altKey, bounds);
       last = s.g;
       setLocal({ id: n.id, g: s.g });
       setGuides({ x: s.gx, y: s.gy });
@@ -124,7 +184,65 @@ export function Canvas(p: Props) {
     window.addEventListener("pointerup", up);
   }
 
-  const sorted = [...p.nodes].sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0));
+  function renderNode(n: NodeView, z: number) {
+    const g = geoOf(n);
+    const remote = p.drags[n.id];
+    const lease = p.leases[n.id];
+    const lockedByOther = lease && lease.holder_session !== p.mySession;
+    const nl = p.locks[n.id];
+    const pinned = !!nl && !p.canOverride(nl);
+    const isSel = p.selected === n.id;
+    const kids = childMap.get(n.id) ?? [];
+    const container = isContainer(n.type);
+    return (
+      <div
+        key={n.id}
+        className="wc-el group"
+        style={{
+          left: g.x, top: g.y, width: g.w, height: g.h, zIndex: z,
+          overflow: "visible",
+          cursor: p.readOnly ? "default" : lockedByOther || pinned ? "not-allowed" : "move",
+          outline: isSel ? "2px solid var(--primary)" : dropTarget === n.id ? "2px dashed var(--primary)" : lockedByOther ? `2px dashed ${lease.holder_color}` : undefined,
+          outlineOffset: 2,
+          transition: remote ? "left 60ms linear, top 60ms linear" : undefined,
+        }}
+        onPointerDown={(e) => startDrag(e, n, false)}
+      >
+        <div
+          className="pointer-events-none h-full w-full overflow-hidden group-hover:outline group-hover:outline-1 group-hover:outline-[var(--ring)]"
+          style={styleObj(n.style) as React.CSSProperties}
+          dangerouslySetInnerHTML={{ __html: blockHtml(n.type, n, n.id) }}
+        />
+        {container && kids.length === 0 && !n.text.trim() && (
+          <div className="pointer-events-none absolute inset-0 grid place-items-center">
+            <span className="rounded-full border border-dashed border-primary/50 bg-card/80 px-3 py-1 font-sans text-[11px] text-muted-foreground">
+              Drop blocks here
+            </span>
+          </div>
+        )}
+        {kids.map((k, i) => renderNode(k, i + 1))}
+        {lockedByOther && (
+          <span
+            className="absolute -top-3 right-1 z-10 flex items-center gap-1 rounded-full px-2 py-0.5 font-sans text-[10px] font-medium text-primary-foreground"
+            style={{ background: lease.holder_color }}
+          >
+            🔒 {lease.holder_name} is editing
+          </span>
+        )}
+        {nl && !lockedByOther && (
+          <span className="absolute -top-3 left-1 z-10 rounded-full border bg-card px-2 py-0.5 font-sans text-[10px] font-medium text-foreground shadow-sm">
+            {nl.mode === "move" ? "📌 Pinned" : "🔒 Locked"} by {nl.locked_by_name}{pinned ? "" : " · you can edit"}
+          </span>
+        )}
+        {isSel && !p.readOnly && !pinned && (
+          <div
+            className="absolute -bottom-1.5 -right-1.5 z-10 size-3 cursor-se-resize rounded-sm border-2 border-primary bg-card"
+            onPointerDown={(e) => startDrag(e, n, true)}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -138,63 +256,29 @@ export function Canvas(p: Props) {
         style={{ width: pageW, height: pageH, transform: `scale(${p.scale})`, ...cssVars(p.theme) }}
         onPointerDown={() => p.onSelect(null)}
         onPointerMove={(e) => { const c = toPage(e); p.onCursor(c.x, c.y); }}
-        onDragOver={(e) => { if (!p.readOnly) e.preventDefault(); }}
+        onDragOver={(e) => {
+          if (p.readOnly) return;
+          e.preventDefault();
+          const c = toPage(e);
+          const t = containerAt(c.x, c.y);
+          setDropTarget((cur) => (cur === (t?.id ?? null) ? cur : (t?.id ?? null)));
+        }}
+        onDragLeave={() => setDropTarget(null)}
         onDrop={(e) => {
+          setDropTarget(null);
           const t = e.dataTransfer.getData("application/x-webcraft-block") as BlockType;
           if (!t) return;
           const c = toPage(e);
-          p.onDropBlock(t, c.x, c.y);
+          const target = isContainer(t) ? null : containerAt(c.x, c.y);
+          if (target) {
+            const g = absGeo(target);
+            p.onDropBlock(t, c.x - g.x, c.y - g.y, target.id);
+          } else {
+            p.onDropBlock(t, c.x, c.y);
+          }
         }}
       >
-        {sorted.map((n, i) => {
-          const remote = p.drags[n.id];
-          const g = local?.id === n.id ? local.g : remote && remote.bp === p.bp ? remote : n.geo[p.bp];
-          const lease = p.leases[n.id];
-          const lockedByOther = lease && lease.holder_session !== p.mySession;
-          const nl = p.locks[n.id];
-          const pinned = !!nl && !p.canOverride(nl);
-          const isSel = p.selected === n.id;
-          return (
-            <div
-              key={n.id}
-              className="wc-el group"
-              style={{
-                left: g.x, top: g.y, width: g.w, height: g.h, zIndex: i + 1,
-                overflow: "visible",
-                cursor: p.readOnly ? "default" : lockedByOther || pinned ? "not-allowed" : "move",
-                outline: isSel ? "2px solid var(--primary)" : lockedByOther ? `2px dashed ${lease.holder_color}` : undefined,
-                outlineOffset: 2,
-                transition: remote ? "left 60ms linear, top 60ms linear" : undefined,
-              }}
-              onPointerDown={(e) => startDrag(e, n, false)}
-            >
-              <div
-                className="pointer-events-none h-full w-full overflow-hidden group-hover:outline group-hover:outline-1 group-hover:outline-[var(--ring)]"
-                style={styleObj(n.style) as React.CSSProperties}
-                dangerouslySetInnerHTML={{ __html: blockHtml(n.type, n, n.id) }}
-              />
-              {lockedByOther && (
-                <span
-                  className="absolute -top-3 right-1 z-10 flex items-center gap-1 rounded-full px-2 py-0.5 font-sans text-[10px] font-medium text-primary-foreground"
-                  style={{ background: lease.holder_color }}
-                >
-                  🔒 {lease.holder_name} is editing
-                </span>
-              )}
-              {nl && !lockedByOther && (
-                <span className="absolute -top-3 left-1 z-10 rounded-full border bg-card px-2 py-0.5 font-sans text-[10px] font-medium text-foreground shadow-sm">
-                  {nl.mode === "move" ? "📌 Pinned" : "🔒 Locked"} by {nl.locked_by_name}{pinned ? "" : " · you can edit"}
-                </span>
-              )}
-              {isSel && !p.readOnly && !pinned && (
-                <div
-                  className="absolute -bottom-1.5 -right-1.5 z-10 size-3 cursor-se-resize rounded-sm border-2 border-primary bg-card"
-                  onPointerDown={(e) => startDrag(e, n, true)}
-                />
-              )}
-            </div>
-          );
-        })}
+        {top.map((n, i) => renderNode(n, i + 1))}
         {guides.x.map((x, i) => (
           <div key={`gx${i}`} className="pointer-events-none absolute top-0 z-[9998] w-px bg-guide" style={{ left: x, height: pageH }} />
         ))}
