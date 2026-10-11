@@ -12,12 +12,12 @@ export function useChat(projectId: string, myId: string, isOpen: boolean, nameOf
 
   useEffect(() => {
     let cancelled = false;
-    supabase.from("messages").select("*").eq("project_id", projectId).order("created_at", { ascending: false }).limit(200).then(({ data }) => {
+    supabase.from("chat_messages").select("*").eq("project_id", projectId).order("created_at", { ascending: false }).limit(200).then(({ data }) => {
       if (!cancelled && data) setMessages((data as Message[]).reverse());
     });
     const ch = supabase
       .channel(`chat:${projectId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `project_id=eq.${projectId}` }, (p) => {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages", filter: `project_id=eq.${projectId}` }, (p) => {
         const m = p.new as Message;
         setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
         if (m.user_id !== myId) {
@@ -25,7 +25,7 @@ export function useChat(projectId: string, myId: string, isOpen: boolean, nameOf
           if (m.mentions.includes(myId)) toast(`${nameOf(m.user_id)} mentioned you`, { description: m.body.slice(0, 120) });
         }
       })
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages" }, (p) => {
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "chat_messages" }, (p) => {
         const id = (p.old as { id?: string }).id;
         if (id) setMessages((prev) => prev.filter((x) => x.id !== id));
       })
@@ -34,7 +34,7 @@ export function useChat(projectId: string, myId: string, isOpen: boolean, nameOf
   }, [projectId, myId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = useCallback(async (body: string, mentions: string[], activityId: number | null) => {
-    const { data, error } = await supabase.from("messages").insert({ project_id: projectId, body, mentions, activity_id: activityId }).select().single();
+    const { data, error } = await supabase.from("chat_messages").insert({ project_id: projectId, body, mentions, activity_id: activityId }).select().single();
     if (error) { toast.error("Message not sent"); return false; }
     setMessages((prev) => (prev.some((x) => x.id === data.id) ? prev : [...prev, data as Message]));
     return true;
@@ -42,7 +42,7 @@ export function useChat(projectId: string, myId: string, isOpen: boolean, nameOf
 
   const remove = useCallback(async (id: string) => {
     setMessages((prev) => prev.filter((x) => x.id !== id));
-    await supabase.from("messages").delete().eq("id", id);
+    await supabase.from("chat_messages").delete().eq("id", id);
   }, []);
 
   return { messages, unread, send, remove };
