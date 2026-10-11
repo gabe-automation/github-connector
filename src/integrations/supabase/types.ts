@@ -67,6 +67,44 @@ export type Database = {
           },
         ]
       }
+      chat_messages: {
+        Row: {
+          activity_id: number | null
+          body: string
+          created_at: string
+          id: string
+          mentions: string[]
+          project_id: string
+          user_id: string
+        }
+        Insert: {
+          activity_id?: number | null
+          body: string
+          created_at?: string
+          id?: string
+          mentions?: string[]
+          project_id: string
+          user_id?: string
+        }
+        Update: {
+          activity_id?: number | null
+          body?: string
+          created_at?: string
+          id?: string
+          mentions?: string[]
+          project_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leases: {
         Row: {
           expires_at: string
