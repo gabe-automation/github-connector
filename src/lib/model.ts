@@ -80,8 +80,12 @@ export function toView(id: string, p: Props): NodeView | null {
 }
 
 export function pageHeight(nodes: NodeView[], bp: Breakpoint): number {
+  const ids = new Set(nodes.map((n) => n.id));
   let m = 700;
-  for (const n of nodes) m = Math.max(m, n.geo[bp].y + n.geo[bp].h + 120);
+  for (const n of nodes) {
+    if (n.parent && ids.has(n.parent)) continue; // children don't extend the page
+    m = Math.max(m, n.geo[bp].y + n.geo[bp].h + 120);
+  }
   return m;
 }
 
@@ -89,9 +93,26 @@ const shortId = (id: string) => "n" + id.replace(/-/g, "").slice(0, 8);
 
 export function generateExport(nodes: NodeView[], theme: Theme, title: string) {
   const sorted = [...nodes].sort((a, b) => a.geo.desktop.y - b.geo.desktop.y || a.geo.desktop.x - b.geo.desktop.x);
-  const body = sorted
-    .map((n) => `    <div class="wc-el" id="${shortId(n.id)}"${n.type === "input" ? "" : attrString(n.attrs)}>\n      ${blockHtml(n.type, n, shortId(n.id))}\n    </div>`)
-    .join("\n");
+  const ids = new Set(nodes.map((n) => n.id));
+  const childrenOf = new Map<string, NodeView[]>();
+  const topLevel: NodeView[] = [];
+  for (const n of sorted) {
+    if (n.parent && ids.has(n.parent)) {
+      const arr = childrenOf.get(n.parent) ?? [];
+      arr.push(n);
+      childrenOf.set(n.parent, arr);
+    } else {
+      topLevel.push(n);
+    }
+  }
+  const renderEl = (n: NodeView, indent: string): string => {
+    const kids = (childrenOf.get(n.id) ?? [])
+      .map((k) => renderEl(k, indent + "  "))
+      .join("\n");
+    const inner = blockHtml(n.type, n, shortId(n.id));
+    return `${indent}<div class="wc-el" id="${shortId(n.id)}"${n.type === "input" ? "" : attrString(n.attrs)}>\n${indent}  ${inner}${kids ? `\n${kids}` : ""}\n${indent}</div>`;
+  };
+  const body = topLevel.map((n) => renderEl(n, "    ")).join("\n");
   const html = `<!doctype html>
 <html lang="en">
 <head>
