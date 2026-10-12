@@ -740,7 +740,7 @@ function EditorPage() {
                   </button>
                 ))}
               </div>
-              <p className="mt-3 px-1 text-[11px] leading-relaxed text-muted-foreground">Click or drag onto the page. Arrow keys nudge, Ctrl/Cmd+D duplicates, Delete removes.</p>
+              <p className="mt-3 px-1 text-[11px] leading-relaxed text-muted-foreground">Click or drag onto the page — drop onto a Flex row, Grid, Stack, Absolute box or Section to nest the block inside it. Arrow keys nudge, Ctrl/Cmd+D duplicates, Delete removes.</p>
             </>
           )}
         </aside>
@@ -784,7 +784,7 @@ function EditorPage() {
                   cursors={room.cursors} pageId={page.id} drags={room.drags} readOnly={readOnly} prefs={prefs} locks={room.locks} canOverride={canOverride} onSelect={select} onCommit={commitGeo}
                   onLiveDrag={(id, g, done) => room.sendDrag({ id, bp, ...g, done })}
                   onCursor={(x, y) => room.sendCursor(x, y, page.id)}
-                  onDropBlock={(t, x, y) => addBlock(t, { x, y })} />
+                  onDropBlock={(t, x, y, parentId) => addBlock(t, { x, y }, undefined, parentId)} />
               </>
             )}
           </main>
