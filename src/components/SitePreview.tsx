@@ -17,7 +17,28 @@ export function SitePreview({ nodes, theme = DEFAULT_THEME, height = 180, classN
   const scale = w / pageW;
   const vars: Record<string, string> = {};
   for (const part of themeVars(theme).split(";")) { const [k, v] = part.split(":"); if (k && v) vars[k] = v; }
-  const sorted = [...nodes].sort((a, b) => (a.order < b.order ? -1 : 1));
+  const ids = new Set(nodes.map((n) => n.id));
+  const childMap = new Map<string, NodeView[]>();
+  const top: NodeView[] = [];
+  for (const n of nodes) {
+    if (n.parent && ids.has(n.parent)) {
+      const arr = childMap.get(n.parent) ?? [];
+      arr.push(n);
+      childMap.set(n.parent, arr);
+    } else top.push(n);
+  }
+  const byOrder = (a: NodeView, b: NodeView) => (a.order < b.order ? -1 : 1);
+  top.sort(byOrder);
+  for (const arr of childMap.values()) arr.sort(byOrder);
+  const renderNode = (n: NodeView): React.ReactNode => {
+    const g = n.geo.desktop;
+    return (
+      <div key={n.id} className="wc-el" style={{ left: g.x, top: g.y, width: g.w, height: g.h, ...(styleObj(n.style) as React.CSSProperties) }}>
+        <div className="h-full w-full overflow-hidden" dangerouslySetInnerHTML={{ __html: blockHtml(n.type, n, "pv" + n.id.slice(0, 6)) }} />
+        {(childMap.get(n.id) ?? []).map(renderNode)}
+      </div>
+    );
+  };
   return (
     <div ref={ref} className={`relative overflow-hidden bg-muted ${className}`} style={{ height }} aria-hidden>
       <style>{BLOCK_CSS}</style>
@@ -26,13 +47,7 @@ export function SitePreview({ nodes, theme = DEFAULT_THEME, height = 180, classN
       ) : (
         <div className="wc-page pointer-events-none absolute left-0 top-0 origin-top-left"
           style={{ width: pageW, height: pageHeight(nodes, "desktop"), transform: `scale(${scale})`, ...(vars as React.CSSProperties) }}>
-          {sorted.map((n) => {
-            const g = n.geo.desktop;
-            return (
-              <div key={n.id} className="wc-el" style={{ left: g.x, top: g.y, width: g.w, height: g.h, ...(styleObj(n.style) as React.CSSProperties) }}
-                dangerouslySetInnerHTML={{ __html: blockHtml(n.type, n, "pv" + n.id.slice(0, 6)) }} />
-            );
-          })}
+          {top.map(renderNode)}
         </div>
       )}
     </div>

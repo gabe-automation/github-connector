@@ -1,21 +1,18 @@
-# WebCraft roadmap (imported)
+# WebCraft roadmap
 
-## Import & backend
-- [x] Import codebase from GitHub
-- [x] Enable Lovable Cloud, apply migrations (core, locks, pages, chat, published sites)
-- [x] Enable email/password auth + Google sign-in
-- [x] Green build
+## Fix list (from Gabriel)
 
-## Fix list (user)
-- [ ] Fix create-project-from-template flow
-- [ ] Improve UI/UX so pages feel like real pages
-- [ ] Real-time code viewer (live HTML/CSS/JS as canvas changes)
-- [ ] Builder blocks: highly customizable and actually functional
-- [ ] Fix email/password login + register (alongside Google)
-- [ ] Container block: real layout panel with nested child blocks
+- [x] Create-project-from-template flow — verified end to end: sign in → Templates → Use template → project opens with all template blocks on the canvas.
+- [x] Pages feel like real pages — pages panel with Home/Team chat, blank-page creation, per-page export and publish.
+- [x] Real-time code viewer — Code tab regenerates HTML/CSS/JS on every canvas change (verified: editing block text updates the code instantly); manual edits still preserved until reset.
+- [x] Builder blocks customizable and functional — per-block text, link, style, attributes, layout and logic editing verified working.
+- [x] Email/password login + register alongside Google — both work; email confirmation is now auto-confirmed so accounts sign in immediately.
+- [x] Container blocks are real layout panels — drop any block onto a Flex row / Grid / Stack / Absolute box / Section to nest it; children move/resize inside the container, export nests the HTML, thumbnails render nesting, deleting a container deletes its children.
 
-## Original backlog (deferred)
-- [ ] Revision history + rollback
-- [ ] Inline text editing on canvas
-- [ ] Publish to subdomain
-- [ ] Live theme sync across tabs
+## Backlog (deferred)
+
+- [ ] Revision history + rollback UI (activity table already stores before/after)
+- [ ] Inline text editing directly on the canvas
+- [ ] Publish to a friendly subdomain
+- [ ] Live theme sync across open tabs
+- [ ] Drag an existing block into/out of a container (currently nesting happens on drop from the palette)
