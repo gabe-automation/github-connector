@@ -28,6 +28,7 @@ function AuthPage() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [agreed, setAgreed] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -83,7 +84,7 @@ function AuthPage() {
           <p className="mt-2 text-muted-foreground">
             {mode === "signin" ? "Sign in to your projects." : "Create an account — it takes a moment."}
           </p>
-          <Button variant="outline" className="mt-8 w-full" onClick={google}>
+          <Button variant="outline" className="mt-8 w-full" onClick={google} disabled={!agreed}>
             Continue with Google
           </Button>
           <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
@@ -104,7 +105,11 @@ function AuthPage() {
               <Label htmlFor="password">Password</Label>
               <Input id="password" type="password" minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} required />
             </div>
-            <Button type="submit" className="w-full" disabled={busy}>
+            <label className="flex items-start gap-2 text-sm text-muted-foreground">
+              <input type="checkbox" className="mt-1 accent-primary" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} required />
+              <span>I agree to the <Link to="/terms" target="_blank" className="text-foreground underline">Terms & Conditions</Link> and have read <Link to="/about" target="_blank" className="text-foreground underline">About WebCraft</Link>.</span>
+            </label>
+            <Button type="submit" className="w-full" disabled={busy || !agreed}>
               {busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
             </Button>
           </form>
@@ -114,6 +119,10 @@ function AuthPage() {
           >
             {mode === "signin" ? "New here? Create an account" : "Already have an account? Sign in"}
           </button>
+          <div className="mt-4 flex gap-4 text-xs text-muted-foreground">
+            <Link to="/about" className="hover:underline">About</Link>
+            <Link to="/terms" className="hover:underline">Terms & Conditions</Link>
+          </div>
         </div>
       </div>
     </div>
