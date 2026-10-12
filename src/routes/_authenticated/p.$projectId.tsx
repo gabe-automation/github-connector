@@ -302,7 +302,7 @@ function EditorPage() {
       const g = sel.geo[bp];
       const d: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
       if (d[e.key]) { e.preventDefault(); commitGeo(sel.id, { ...g, x: g.x + d[e.key]![0], y: Math.max(0, g.y + d[e.key]![1]) }, "moved"); }
-      else if ((e.key === "Delete" || e.key === "Backspace")) { room.op(sel.id, { deleted: true }, "deleted", labelOf(sel)); select(null); }
+      else if ((e.key === "Delete" || e.key === "Backspace")) { void removeNode(sel.id); select(null); }
       else if ((e.metaKey || e.ctrlKey) && e.key === "d") { e.preventDefault(); addBlock(sel.type, undefined, sel); }
     };
     window.addEventListener("keydown", onKey);
