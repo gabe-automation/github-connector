@@ -597,7 +597,7 @@ function EditorPage() {
                   }}
                   onDuplicate={() => addBlock(sel.type, undefined, sel)}
                   onDelete={async () => {
-                    await room.op(sel.id, { deleted: true }, "deleted", labelOf(sel));
+                    await removeNode(sel.id);
                     select(null);
                   }}
                 />
