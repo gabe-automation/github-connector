@@ -1,5 +1,9 @@
 # WebCraft roadmap
 
+## Landing redesign
+- [ ] Redesign the entire landing page and animated 3D composition.
+- [ ] Remove credit-card and free-forever claims; verify navigation and template selection.
+
 ## Fix list (from Gabriel)
 
 - [x] Create-project-from-template flow — verified end to end: sign in → Templates → Use template → project opens with all template blocks on the canvas.
