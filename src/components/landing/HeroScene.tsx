@@ -1,71 +1,57 @@
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Environment, Float, Lightformer, RoundedBox } from "@react-three/drei";
-import { useRef } from "react";
+import { RoundedBox, useTexture } from "@react-three/drei";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import productImage from "@/assets/studio-product.jpg";
 
-// A clean "browser window" built from soft rounded panels — minimal, airy.
-const PANELS: { p: [number, number, number]; s: [number, number, number]; c: string }[] = [
-  { p: [0, 0, 0], s: [4.4, 2.8, 0.1], c: "#ffffff" },          // window
-  { p: [0, 1.22, 0.08], s: [4.4, 0.36, 0.08], c: "#edf2f3" },  // title bar
-  { p: [-1.35, 0.45, 0.12], s: [1.5, 0.9, 0.08], c: "#008A83" }, // hero block
-  { p: [0.75, 0.45, 0.12], s: [1.9, 0.28, 0.08], c: "#183238" }, // headline
-  { p: [0.55, 0.05, 0.12], s: [1.5, 0.18, 0.08], c: "#cad8dc" }, // text line
-  { p: [-1.35, -0.75, 0.12], s: [0.85, 0.7, 0.08], c: "#f2c14e" }, // card
-  { p: [-0.3, -0.75, 0.12], s: [0.85, 0.7, 0.08], c: "#e8794a" },  // card
-  { p: [0.75, -0.75, 0.12], s: [0.85, 0.7, 0.08], c: "#DCE5E7" },  // card
-];
-
-// Floating accent chips around the window
-const CHIPS: { p: [number, number, number]; s: [number, number, number]; c: string }[] = [
-  { p: [-3.1, 1.1, -0.6], s: [0.9, 0.55, 0.08], c: "#008A83" },
-  { p: [3.0, -1.2, -0.4], s: [0.8, 0.5, 0.08], c: "#e8794a" },
-  { p: [2.9, 1.4, -0.8], s: [0.6, 0.6, 0.08], c: "#f2c14e" },
-];
-
-function Scene() {
-  const g = useRef<THREE.Group>(null);
-  useFrame(({ pointer }, raw) => {
-    const dt = Math.min(raw, 0.05);
-    if (!g.current) return;
-    const k = 1 - Math.exp(-3 * dt);
-    g.current.rotation.y += (pointer.x * 0.22 - g.current.rotation.y) * k;
-    g.current.rotation.x += (-pointer.y * 0.14 - g.current.rotation.x) * k;
+function Website({ reduced }: { reduced: boolean }) {
+  const group = useRef<THREE.Group>(null);
+  const image = useTexture(productImage);
+  const texture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600; canvas.height = 960;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return new THREE.Texture();
+    const css = getComputedStyle(document.documentElement);
+    const color = (name: string) => css.getPropertyValue(name).trim();
+    ctx.fillStyle = color("--showcase-paper"); ctx.fillRect(0, 0, 1600, 960);
+    ctx.fillStyle = color("--showcase-ink"); ctx.font = "bold 24px sans-serif";
+    ctx.fillText("COMMON GROUND", 65, 65);
+    ctx.font = "18px sans-serif"; ctx.fillText("Objects     Our studio     Journal", 1060, 65);
+    ctx.fillRect(65, 98, 1470, 1);
+    ctx.font = "bold 86px sans-serif"; ctx.fillText("Less noise.", 65, 213); ctx.fillText("More presence.", 65, 308);
+    ctx.font = "22px sans-serif"; ctx.fillText("Thoughtful objects for everyday living.", 900, 215);
+    ctx.fillStyle = color("--showcase-accent"); ctx.fillRect(900, 248, 235, 58);
+    ctx.fillStyle = color("--showcase-paper"); ctx.font = "20px sans-serif"; ctx.fillText("Explore collection  ↗", 922, 284);
+    ctx.drawImage(image.image, 65, 350, 1470, 570);
+    const result = new THREE.CanvasTexture(canvas); result.colorSpace = THREE.SRGBColorSpace;
+    return result;
+  }, [image]);
+  useEffect(() => () => texture.dispose(), [texture]);
+  const colors = useMemo(() => {
+    const css = getComputedStyle(document.documentElement);
+    return { paper: css.getPropertyValue("--showcase-paper").trim(), ink: css.getPropertyValue("--showcase-ink").trim(), accent: css.getPropertyValue("--showcase-accent").trim() };
+  }, []);
+  useFrame(({ pointer, clock }, dt) => {
+    if (!group.current) return;
+    const k = 1 - Math.exp(-4 * Math.min(dt, 0.05));
+    group.current.rotation.x = THREE.MathUtils.lerp(group.current.rotation.x, -0.12 - (reduced ? 0 : pointer.y * 0.07), k);
+    group.current.rotation.y = THREE.MathUtils.lerp(group.current.rotation.y, -0.12 + (reduced ? 0 : pointer.x * 0.14), k);
+    group.current.position.y = reduced ? 0 : Math.sin(clock.elapsedTime * 0.8) * 0.045;
   });
-  return (
-    <group ref={g} rotation={[0.06, -0.12, 0]}>
-      {PANELS.map((b, i) => (
-        <RoundedBox key={i} args={b.s} radius={0.05} smoothness={4} position={b.p} castShadow receiveShadow>
-          <meshStandardMaterial color={b.c} roughness={0.5} metalness={0.02} />
-        </RoundedBox>
-      ))}
-      {CHIPS.map((b, i) => (
-        <Float key={i} speed={1.6 + i * 0.4} floatIntensity={1.2} rotationIntensity={0.4}>
-          <RoundedBox args={b.s} radius={0.06} smoothness={4} position={b.p} castShadow>
-            <meshStandardMaterial color={b.c} roughness={0.45} metalness={0.05} />
-          </RoundedBox>
-        </Float>
-      ))}
-      {/* cursor dot */}
-      <Float speed={2.2} floatIntensity={1.4}>
-        <mesh position={[1.9, 0.9, 0.6]}>
-          <sphereGeometry args={[0.09, 24, 24]} />
-          <meshStandardMaterial color="#008A83" emissive="#008A83" emissiveIntensity={0.4} />
-        </mesh>
-      </Float>
-    </group>
-  );
+  return <group ref={group} rotation={[-0.12, -0.12, 0.025]}>
+    <RoundedBox args={[7.7, 4.95, 0.12]} radius={0.06} position={[0.10, -0.09, -0.13]}><meshStandardMaterial color={colors.accent}/></RoundedBox>
+    <RoundedBox args={[7.7, 4.95, 0.12]} radius={0.06}><meshStandardMaterial color={colors.paper}/></RoundedBox>
+    <mesh position={[0, -0.13, 0.065]}><planeGeometry args={[7.5, 4.5]}/><meshBasicMaterial map={texture}/></mesh>
+    {[-3.47, -3.3, -3.13].map((x) => <mesh key={x} position={[x, 2.29, 0.075]}><circleGeometry args={[0.035, 16]}/><meshBasicMaterial color={colors.ink}/></mesh>)}
+    <mesh position={[0, 2.29, 0.07]}><planeGeometry args={[2.3, 0.12]}/><meshBasicMaterial color={colors.paper}/></mesh>
+  </group>;
 }
 
 export default function HeroScene() {
-  return (
-    <Canvas dpr={[1, 1.75]} camera={{ position: [0, 0.4, 7.2], fov: 40 }} shadows gl={{ alpha: true }}>
-      <ambientLight intensity={0.65} />
-      <directionalLight position={[4, 6, 5]} intensity={1.4} castShadow />
-      <Scene />
-      <Environment>
-        <Lightformer intensity={2} position={[0, 5, 0]} scale={[10, 10, 1]} />
-        <Lightformer intensity={1} color="#9cd" position={[-5, 1, -1]} rotation-y={Math.PI / 2} scale={[20, 1, 1]} />
-      </Environment>
-    </Canvas>
-  );
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => { const media = window.matchMedia("(prefers-reduced-motion: reduce)"); const update = () => setReduced(media.matches); update(); media.addEventListener("change", update); return () => media.removeEventListener("change", update); }, []);
+  return <Canvas dpr={[1, 1.5]} camera={{ position: [0, 0.2, 9.2], fov: 40 }} gl={{ alpha: true }} aria-label="Animated website design">
+    <ambientLight intensity={2}/><directionalLight position={[0, 5, 7]} intensity={2}/><Website reduced={reduced}/>
+  </Canvas>;
 }
