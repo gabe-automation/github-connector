@@ -1,4 +1,4 @@
-import { BLOCKS, BLOCK_CSS, boxStyle, isFlow, sanitizeHtml, scopeCss, BOX_KEYS, BREAKPOINTS, STYLE_KEYS, attrString, blockHtml, type BoxOpts, styleCss, themeVars, esc, type BlockStyle, type BlockType, type Breakpoint, type Theme } from "./blocks";
+import { BLOCKS, BLOCK_CSS, BOX_KEYS, BREAKPOINTS, STYLE_KEYS, attrString, blockHtml, type BoxOpts, styleCss, themeVars, esc, type BlockStyle, type BlockType, type Breakpoint, type Theme } from "./blocks";
 import { val, type Props } from "./crdt";
 
 export type Geo = { x: number; y: number; w: number; h: number };
@@ -15,8 +15,6 @@ export type NodeView = {
   style: BlockStyle;
   attrs: Record<string, string>;
   script: string;
-  css: string;
-  html: string;
   box: BoxOpts;
   geo: Record<Breakpoint, Geo>;
 };
@@ -76,8 +74,6 @@ export function toView(id: string, p: Props): NodeView | null {
     style: styleOf(p),
     attrs: val<Record<string, string>>(p, "attrs", {}) ?? {},
     script: val(p, "script", ""),
-    css: val(p, "css", ""),
-    html: val(p, "html", ""),
     box: boxOf(p),
     geo: { desktop: geoFor(p, "desktop"), tablet: geoFor(p, "tablet"), mobile: geoFor(p, "mobile") },
   };
@@ -109,21 +105,12 @@ export function generateExport(nodes: NodeView[], theme: Theme, title: string) {
       topLevel.push(n);
     }
   }
-  for (const [pid, arr] of childrenOf) {
-    const par = nodes.find((m) => m.id === pid);
-    if (par && isFlow(par.type)) arr.sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0));
-  }
   const renderEl = (n: NodeView, indent: string): string => {
     const kids = (childrenOf.get(n.id) ?? [])
       .map((k) => renderEl(k, indent + "  "))
       .join("\n");
-    const extra = n.html.trim() ? sanitizeHtml(n.html) : "";
-    const open = `${indent}<div class="wc-el" id="${shortId(n.id)}"${n.type === "input" ? "" : attrString(n.attrs)}>`;
-    if (isFlow(n.type)) {
-      return `${open}\n${indent}  <div class="wc-box wc-box-${n.type} wc-flow" style="${boxStyle(n.type, n.box)}">${kids ? `\n${kids}\n${indent}  ` : ""}</div>${extra}\n${indent}</div>`;
-    }
     const inner = blockHtml(n.type, n, shortId(n.id));
-    return `${open}\n${indent}  ${inner}${extra}${kids ? `\n${kids}` : ""}\n${indent}</div>`;
+    return `${indent}<div class="wc-el" id="${shortId(n.id)}"${n.type === "input" ? "" : attrString(n.attrs)}>\n${indent}  ${inner}${kids ? `\n${kids}` : ""}\n${indent}</div>`;
   };
   const body = topLevel.map((n) => renderEl(n, "    ")).join("\n");
   const html = `<!doctype html>
@@ -150,7 +137,6 @@ ${body}
         return `  #${shortId(n.id)}{${bp === "desktop" ? styleCss(n.style) : ""}left:${g.x}px;top:${g.y}px;width:${g.w}px;height:${g.h}px;z-index:${sorted.indexOf(n) + 1};}`;
       })
       .join("\n");
-  const custom = sorted.map((n) => scopeCss(n.css, `#${shortId(n.id)}`)).filter(Boolean).join("\n");
   const css = `:root{${themeVars(theme)}}
 body{margin:0;background:var(--wc-surface);}
 .wc-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);}
@@ -165,7 +151,7 @@ ${rules("tablet")}
   .wc-page{width:${BREAKPOINTS.mobile.width}px;min-height:${pageHeight(nodes, "mobile")}px;}
 ${rules("mobile")}
 }
-${custom ? `/* Custom block CSS */\n${custom}\n` : ""}`;
+`;
   const scripts = sorted.filter((n) => n.script.trim()).map((n) => {
     const sid = shortId(n.id);
     const code = n.script.replace(/<\/script/gi, "<\\/script").split("\n").map((l) => "    " + l).join("\n");

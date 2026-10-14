@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BLOCK_CSS, BREAKPOINTS, blockHtml, boxStyle, isFlow, styleObj, themeVars, DEFAULT_THEME, type Theme } from "@/lib/blocks";
+import { BLOCK_CSS, BREAKPOINTS, blockHtml, styleObj, themeVars, DEFAULT_THEME, type Theme } from "@/lib/blocks";
 import { pageHeight, type NodeView } from "@/lib/model";
 
 /** Scaled, non-interactive thumbnail of a canvas page. */
@@ -30,22 +30,12 @@ export function SitePreview({ nodes, theme = DEFAULT_THEME, height = 180, classN
   const byOrder = (a: NodeView, b: NodeView) => (a.order < b.order ? -1 : 1);
   top.sort(byOrder);
   for (const arr of childMap.values()) arr.sort(byOrder);
-  const byId = new Map(nodes.map((n) => [n.id, n]));
   const renderNode = (n: NodeView): React.ReactNode => {
     const g = n.geo.desktop;
-    const par = n.parent ? byId.get(n.parent) : undefined;
-    const inFlow = !!par && isFlow(par.type);
-    const kids = (childMap.get(n.id) ?? []).map(renderNode);
     return (
-      <div key={n.id} className="wc-el" style={{ ...(inFlow ? {} : { left: g.x, top: g.y }), width: g.w, height: g.h, ...(styleObj(n.style) as React.CSSProperties) }}>
-        {isFlow(n.type) ? (
-          <div className={`wc-box wc-box-${n.type} wc-flow`} ref={(el) => { if (el) el.setAttribute("style", boxStyle(n.type, n.box)); }}>{kids}</div>
-        ) : (
-          <>
-            <div className="h-full w-full overflow-hidden" dangerouslySetInnerHTML={{ __html: blockHtml(n.type, n, "pv" + n.id.slice(0, 6)) }} />
-            {kids}
-          </>
-        )}
+      <div key={n.id} className="wc-el" style={{ left: g.x, top: g.y, width: g.w, height: g.h, ...(styleObj(n.style) as React.CSSProperties) }}>
+        <div className="h-full w-full overflow-hidden" dangerouslySetInnerHTML={{ __html: blockHtml(n.type, n, "pv" + n.id.slice(0, 6)) }} />
+        {(childMap.get(n.id) ?? []).map(renderNode)}
       </div>
     );
   };

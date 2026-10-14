@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { BLOCK_CSS, BREAKPOINTS, blockHtml, boxStyle, isContainer, isFlow, sanitizeHtml, scopeCss, styleObj, themeVars, type BlockType, type Breakpoint, type Theme } from "@/lib/blocks";
+import { BLOCK_CSS, BREAKPOINTS, blockHtml, isContainer, styleObj, themeVars, type BlockType, type Breakpoint, type Theme } from "@/lib/blocks";
 import { pageHeight, type Geo, type NodeView } from "@/lib/model";
 import type { Cursor, Lease, NodeLock } from "@/lib/useRoom";
 import { snapGrid, type DragPrefs } from "@/lib/dragPrefs";
@@ -24,15 +24,6 @@ type Props = {
   onLiveDrag: (id: string, g: Geo, done?: boolean) => void;
   onCursor: (x: number, y: number) => void;
   onDropBlock: (type: BlockType, x: number, y: number, parentId?: string) => void;
-  onReorder: (id: string, beforeId: string | null) => void;
-};
-
-const FLOW_HINT: Record<string, string> = {
-  flex: "Drop blocks here — they line up in a row",
-  grid: "Drop blocks here — they fill the grid cells",
-  stack: "Drop blocks here — they stack top to bottom",
-  absolute: "Drop blocks here — place them anywhere inside",
-  section: "Drop blocks here",
 };
 
 const SNAP = 6;
@@ -44,7 +35,6 @@ export function Canvas(p: Props) {
   const [local, setLocal] = useState<{ id: string; g: Geo } | null>(null);
   const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] });
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  const [reordering, setReordering] = useState<string | null>(null);
 
   const toPage = (e: { clientX: number; clientY: number }) => {
     const r = pageRef.current!.getBoundingClientRect();
@@ -164,13 +154,9 @@ export function Canvas(p: Props) {
     const orig = n.geo[p.bp];
     const parentView = n.parent && ids.has(n.parent) ? p.nodes.find((m) => m.id === n.parent) : undefined;
     const bounds = parentView ? parentView.geo[p.bp] : undefined;
-    const flowChild = !resizing && !!parentView && isFlow(parentView.type);
     let last = orig;
     let moved = false;
-    let lastPt = { x: e.clientX, y: e.clientY };
     const move = (ev: PointerEvent) => {
-      lastPt = { x: ev.clientX, y: ev.clientY };
-      if (flowChild) { moved = true; setReordering(n.id); return; }
       const cur = toPage(ev);
       let dx = cur.x - start.x, dy = cur.y - start.y;
       if (!resizing && p.prefs.axis === "x") dy = 0;
@@ -188,19 +174,6 @@ export function Canvas(p: Props) {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setGuides({ x: [], y: [] });
-      if (flowChild) {
-        setReordering(null);
-        if (!moved || !parentView) return;
-        const sibs = Array.from(pageRef.current?.querySelectorAll<HTMLElement>(`[data-n="${parentView.id}"] > .wc-flow > [data-n]`) ?? []).filter((el) => el.dataset.n !== n.id);
-        const stack = parentView.type === "stack" || (parentView.type === "flex" && parentView.box.dir === "column");
-        const before = sibs.find((el) => {
-          const r = el.getBoundingClientRect();
-          if (stack) return lastPt.y < r.top + r.height / 2;
-          return lastPt.y < r.top || (lastPt.y <= r.bottom && lastPt.x < r.left + r.width / 2);
-        });
-        p.onReorder(n.id, before?.dataset.n ?? null);
-        return;
-      }
       if (moved) {
         p.onLiveDrag(n.id, last, true);
         p.onCommit(n.id, last, resizing ? "resized" : "moved");
@@ -221,19 +194,13 @@ export function Canvas(p: Props) {
     const isSel = p.selected === n.id;
     const kids = childMap.get(n.id) ?? [];
     const container = isContainer(n.type);
-    const flow = isFlow(n.type);
-    const parentNode = n.parent ? p.nodes.find((m) => m.id === n.parent) : undefined;
-    const inFlow = !!parentNode && isFlow(parentNode.type);
-    const kidEls = kids.map((k, i) => renderNode(k, i + 1));
     return (
       <div
         key={n.id}
-        data-n={n.id}
         className="wc-el group"
         style={{
-          ...(inFlow ? {} : { left: g.x, top: g.y }), width: g.w, height: g.h, zIndex: z,
+          left: g.x, top: g.y, width: g.w, height: g.h, zIndex: z,
           overflow: "visible",
-          opacity: reordering === n.id ? 0.5 : undefined,
           cursor: p.readOnly ? "default" : lockedByOther || pinned ? "not-allowed" : "move",
           outline: isSel ? "2px solid var(--primary)" : dropTarget === n.id ? "2px dashed var(--primary)" : lockedByOther ? `2px dashed ${lease.holder_color}` : undefined,
           outlineOffset: 2,
@@ -244,19 +211,16 @@ export function Canvas(p: Props) {
         <div
           className="pointer-events-none h-full w-full overflow-hidden group-hover:outline group-hover:outline-1 group-hover:outline-[var(--ring)]"
           style={styleObj(n.style) as React.CSSProperties}
-          dangerouslySetInnerHTML={{ __html: (flow ? "" : blockHtml(n.type, n, n.id)) + (n.html.trim() ? sanitizeHtml(n.html) : "") }}
+          dangerouslySetInnerHTML={{ __html: blockHtml(n.type, n, n.id) }}
         />
-        {n.css.trim() && <style>{scopeCss(n.css, `.wc-el[data-n="${n.id}"]`)}</style>}
-        {container && kids.length === 0 && (
+        {container && kids.length === 0 && !n.text.trim() && (
           <div className="pointer-events-none absolute inset-0 grid place-items-center">
             <span className="rounded-full border border-dashed border-primary/50 bg-card/80 px-3 py-1 font-sans text-[11px] text-muted-foreground">
-              {FLOW_HINT[n.type] ?? "Drop blocks here"}
+              Drop blocks here
             </span>
           </div>
         )}
-        {flow ? (
-          <div className={`wc-box wc-box-${n.type} wc-flow`} style={{ ...(styleFromCss(boxStyle(n.type, n.box))), ...(dropTarget === n.id ? {} : {}) }}>{kidEls}</div>
-        ) : kidEls}
+        {kids.map((k, i) => renderNode(k, i + 1))}
         {lockedByOther && (
           <span
             className="absolute -top-3 right-1 z-10 flex items-center gap-1 rounded-full px-2 py-0.5 font-sans text-[10px] font-medium text-primary-foreground"
@@ -288,7 +252,7 @@ export function Canvas(p: Props) {
       <style>{BLOCK_CSS}</style>
       <div
         ref={pageRef}
-        className="wc-page wc-editing absolute left-0 top-0 origin-top-left shadow-lift"
+        className="wc-page absolute left-0 top-0 origin-top-left shadow-lift"
         style={{ width: pageW, height: pageH, transform: `scale(${p.scale})`, ...cssVars(p.theme) }}
         onPointerDown={() => p.onSelect(null)}
         onPointerMove={(e) => { const c = toPage(e); p.onCursor(c.x, c.y); }}
@@ -339,16 +303,6 @@ function cssVars(t: Theme): React.CSSProperties {
   for (const part of themeVars(t).split(";")) {
     const [k, v] = part.split(":");
     if (k && v) o[k] = v;
-  }
-  return o as React.CSSProperties;
-}
-
-function styleFromCss(css: string): React.CSSProperties {
-  const o: Record<string, string> = {};
-  for (const part of css.split(";")) {
-    const i = part.indexOf(":");
-    if (i < 1) continue;
-    o[part.slice(0, i).trim().replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())] = part.slice(i + 1).trim();
   }
   return o as React.CSSProperties;
 }
