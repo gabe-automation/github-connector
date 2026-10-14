@@ -109,6 +109,10 @@ export function generateExport(nodes: NodeView[], theme: Theme, title: string) {
       topLevel.push(n);
     }
   }
+  for (const [pid, arr] of childrenOf) {
+    const par = nodes.find((m) => m.id === pid);
+    if (par && isFlow(par.type)) arr.sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0));
+  }
   const renderEl = (n: NodeView, indent: string): string => {
     const kids = (childrenOf.get(n.id) ?? [])
       .map((k) => renderEl(k, indent + "  "))
