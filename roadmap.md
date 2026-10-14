@@ -1,8 +1,8 @@
 # WebCraft roadmap
 
 ## Landing redesign
-- [ ] Redesign the entire landing page and animated 3D composition.
-- [ ] Remove credit-card and free-forever claims; verify navigation and template selection.
+- [x] Redesign the entire landing page and animated 3D composition.
+- [x] Remove credit-card and free-forever claims; verify navigation and template selection.
 
 ## Fix list (from Gabriel)
 
