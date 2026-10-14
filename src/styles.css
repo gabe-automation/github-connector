@@ -175,7 +175,7 @@
 }
 .landing-hero { background: var(--background); }
 .landing-title { font-size: 96px; line-height: 1.08; letter-spacing: 0; }
-.landing-scene { height: 380px; margin-top: 12px; }
+.landing-scene { height: 280px; margin-top: 12px; }
 .landing-templates { background: var(--muted); }
 .landing-invitation {
   --foreground: var(--landing-background);
@@ -190,5 +190,5 @@
 @keyframes landing-drift { to { transform: translate(14px, -10px); } }
 @media (max-width: 640px) {
   .landing-title { font-size: 56px; }
-  .landing-scene { height: 260px; margin-top: 8px; }
+  .landing-scene { height: 220px; margin-top: 8px; }
 }
