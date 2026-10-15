@@ -1,10 +1,60 @@
 export type BlockType =
   | "navbar" | "hero" | "heading" | "text" | "button" | "image" | "cards"
   | "pricing" | "testimonial" | "login" | "register" | "divider" | "footer"
-  | "input" | "flex" | "grid" | "stack" | "absolute" | "section";
+  | "input" | "flex" | "grid" | "stack" | "absolute" | "section" | "video";
+import studioAsset from "@/assets/studio-product.jpg.asset.json";
+import venueAsset from "@/assets/assembly-venue.jpg.asset.json";
 
 export const CONTAINER_TYPES: BlockType[] = ["flex", "grid", "stack", "absolute", "section"];
 export const isContainer = (t: BlockType) => CONTAINER_TYPES.includes(t);
+/** Containers whose children flow with real flex/grid layout (not free positioning). */
+export const FLOW_TYPES: BlockType[] = ["flex", "grid", "stack"];
+export const isFlow = (t: BlockType) => FLOW_TYPES.includes(t);
+/** Layout panels that render no content of their own — only their children. */
+export const isPanel = (t: BlockType) => FLOW_TYPES.includes(t) || t === "absolute";
+
+export const STUDIO_IMAGE = studioAsset.url;
+export const VENUE_IMAGE = venueAsset.url;
+/** Map legacy bundled-asset paths (which break after a rebuild) to stable CDN URLs. */
+export function mediaUrl(raw?: string): string {
+  const v = (raw ?? "").trim();
+  if (!v) return "";
+  if (/studio-product[^/]*\.jpg/.test(v) && !v.includes("/__l5e/")) return STUDIO_IMAGE;
+  if (/assembly-venue[^/]*\.jpg/.test(v) && !v.includes("/__l5e/")) return VENUE_IMAGE;
+  if (/^(https?:\/\/|\/(?!\/)|data:image\/)/i.test(v) && !/["'<>\s]/.test(v)) return v;
+  return "";
+}
+/** Make root-relative media URLs absolute (needed when HTML leaves this origin). */
+export const absolutizeMedia = (html: string, origin: string) => html.replace(/\b(src|poster)="\/(?!\/)/g, `$1="${origin}/`);
+
+/** YouTube / Vimeo link → embeddable player URL. */
+export function embedUrl(u: string): string | null {
+  const y = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{6,})/);
+  if (y) return `https://www.youtube-nocookie.com/embed/${y[1]}`;
+  const v = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  if (v) return `https://player.vimeo.com/video/${v[1]}`;
+  return null;
+}
+
+/** Scope a block's custom CSS: "&" means this block; bare declarations apply to the block itself. */
+export function scopeCss(css: string, sel: string): string {
+  const c = css.replace(/<\/style/gi, "").trim();
+  if (!c) return "";
+  return c.includes("{") ? c.replace(/&/g, sel) : `${sel}{${c}}`;
+}
+/** Strip scripts/handlers from custom HTML before showing it inside the editor. */
+export function sanitizeHtml(html: string): string {
+  if (!html.trim()) return "";
+  if (typeof DOMParser === "undefined") return "";
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  doc.querySelectorAll("script,iframe,object,embed,link,meta,base,form[action]").forEach((n) => n.remove());
+  doc.querySelectorAll("*").forEach((el) => {
+    for (const a of [...el.attributes]) {
+      if (/^on/i.test(a.name) || /^\s*(javascript|data):/i.test(a.value) && /^(href|src|action|xlink:href|formaction)$/i.test(a.name)) el.removeAttribute(a.name);
+    }
+  });
+  return doc.body.firstElementChild?.innerHTML ?? "";
+}
 export type BoxOpts = { gap?: number; cols?: number; dir?: "row" | "column"; align?: "start" | "center" | "end" | "stretch"; justify?: "start" | "center" | "end" | "between"; wrap?: boolean };
 export const BOX_KEYS: (keyof BoxOpts)[] = ["gap", "cols", "dir", "align", "justify", "wrap"];
 
@@ -39,10 +89,11 @@ export const BLOCKS: Record<BlockType, BlockDef> = {
   divider: { name: "Divider", w: 1080, h: 24, text: "", sub: "", label: "" },
   footer: { name: "Footer", w: 1200, h: 120, text: "© 2026 Studio North", sub: "Instagram · Newsletter · Email", label: "" },
   input: { name: "Input field", w: 380, h: 84, text: "Email address", sub: "you@example.com", label: "" },
-  flex: { name: "Flex row", w: 960, h: 160, text: "Item one|Item two|Item three", sub: "", label: "" },
-  grid: { name: "Grid", w: 960, h: 280, text: "One|Two|Three|Four|Five|Six", sub: "", label: "" },
-  stack: { name: "Stack", w: 420, h: 260, text: "First|Second|Third", sub: "", label: "" },
-  absolute: { name: "Absolute box", w: 520, h: 300, text: "Back layer|Middle layer|Front layer", sub: "", label: "" },
+  flex: { name: "Flex row", w: 960, h: 200, text: "", sub: "", label: "" },
+  grid: { name: "Grid", w: 960, h: 320, text: "", sub: "", label: "" },
+  stack: { name: "Stack", w: 420, h: 320, text: "", sub: "", label: "" },
+  absolute: { name: "Absolute box", w: 520, h: 300, text: "", sub: "", label: "" },
+  video: { name: "Video", w: 720, h: 420, text: "Product walkthrough", sub: "", label: "" },
   section: { name: "Section", w: 1200, h: 320, text: "Section title", sub: "Use sections to group content with comfortable spacing.", label: "" },
 };
 
@@ -55,6 +106,13 @@ export function esc(s: string): string {
 const split = (s: string) => s.split("|").map((x) => x.trim());
 
 export type BlockContent = { text: string; sub: string; label: string; href?: string; attrs?: Record<string, string>; box?: BoxOpts };
+
+/** Inline layout CSS for a layout panel's own element (flex/grid/stack enforce real layout). */
+export function panelCss(type: BlockType, b: BoxOpts = {}): string {
+  if (isFlow(type)) return boxStyle(type, b) + "padding:16px;";
+  if (type === "absolute") return "position:absolute;";
+  return "";
+}
 
 const JUST = { start: "flex-start", center: "center", end: "flex-end", between: "space-between" } as const;
 const ALIGN = { start: "flex-start", center: "center", end: "flex-end", stretch: "stretch" } as const;
@@ -85,7 +143,10 @@ export function blockHtml(type: BlockType, c: BlockContent, id: string): string 
     case "navbar":
       return `<nav class="wc-nav" aria-label="Main"><strong class="wc-brand">${t}</strong><ul>${split(c.sub).map((x) => `<li><span>${esc(x)}</span></li>`).join("")}</ul>${action(l)}</nav>`;
     case "hero":
-      return `<section class="wc-hero${c.attrs?.["data-cover"] ? " wc-hero-cover" : ""}">${c.attrs?.["data-cover"] ? `<img class="wc-cover" src="${esc(c.attrs["data-cover"])}" alt="" width="1536" height="1024">` : ""}<h1>${t}</h1><p>${s}</p>${action(l)}</section>`;
+    {
+      const cover = mediaUrl(c.attrs?.["data-cover"]);
+      return `<section class="wc-hero${cover ? " wc-hero-cover" : ""}">${cover ? `<img class="wc-cover" src="${esc(cover)}" alt="" width="1536" height="1024">` : ""}<h1>${t}</h1><p>${s}</p>${action(l)}</section>`;
+    }
     case "heading":
       return `<h2 class="wc-heading" id="work">${t}</h2>`;
     case "text":
@@ -93,7 +154,24 @@ export function blockHtml(type: BlockType, c: BlockContent, id: string): string 
     case "button":
       return action(l);
     case "image":
-      return `<figure class="wc-image">${c.attrs?.["data-image"] ? `<img class="wc-image-photo" src="${esc(c.attrs["data-image"])}" alt="${t}" loading="lazy" width="1536" height="1024">` : `<div class="wc-image-art" role="img" aria-label="${t}"></div>`}<figcaption>${t}</figcaption></figure>`;
+    {
+      const img = mediaUrl(c.attrs?.["data-image"]);
+      return `<figure class="wc-image">${img ? `<img class="wc-image-photo" src="${esc(img)}" alt="${t}" width="1536" height="1024">` : `<div class="wc-image-art" role="img" aria-label="${t}"></div>`}${t ? `<figcaption>${t}</figcaption>` : ""}</figure>`;
+    }
+    case "video": {
+      const raw = (c.attrs?.["data-video"] ?? "").trim();
+      const emb = /^https:\/\//i.test(raw) ? embedUrl(raw) : null;
+      const file = emb ? "" : mediaUrl(raw);
+      const poster = mediaUrl(c.attrs?.["data-poster"]);
+      const flags = ["autoplay", "loop", "muted"].filter((k) => c.attrs?.[`data-${k}`] === "true");
+      if (flags.includes("autoplay") && !flags.includes("muted")) flags.push("muted");
+      const player = emb
+        ? `<iframe class="wc-video-frame" src="${esc(emb)}${flags.includes("autoplay") ? "?autoplay=1&mute=1" : ""}" title="${t}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe>`
+        : file
+          ? `<video class="wc-video-frame" src="${esc(file)}"${poster ? ` poster="${esc(poster)}"` : ""} controls playsinline ${flags.join(" ")} preload="metadata"></video>`
+          : `<div class="wc-video-empty" role="img" aria-label="${t}"><span>▶</span></div>`;
+      return `<figure class="wc-video">${player}${t ? `<figcaption>${t}</figcaption>` : ""}</figure>`;
+    }
     case "cards": {
       const titles = split(c.text), subs = split(c.sub);
       return `<section class="wc-cards" id="features">${titles.map((x, i) => `<article class="wc-card"><h3>${esc(x)}</h3><p>${esc(subs[i] ?? "")}</p></article>`).join("")}</section>`;
@@ -117,11 +195,8 @@ export function blockHtml(type: BlockType, c: BlockContent, id: string): string 
     }
     case "section":
       return `<section class="wc-section"><h2>${t}</h2><p>${s}</p></section>`;
-    case "flex": case "grid": case "stack": case "absolute": {
-      const items = split(c.text).filter(Boolean);
-      const inner = items.map((x, i) => `<div class="wc-item"${type === "absolute" ? ` style="left:${i * 14}%;top:${i * 16}%;z-index:${i + 1}"` : ""}>${esc(x)}</div>`).join("");
-      return `<div class="wc-box wc-box-${type}" style="${boxStyle(type, c.box)}">${inner}</div>`;
-    }
+    case "flex": case "grid": case "stack": case "absolute":
+      return ""; // layout panels render only their children
   }
 }
 
@@ -183,11 +258,17 @@ export const BLOCK_CSS = `
 .wc-field-msg{min-height:14px;font-size:12px;color:#b91c1c;font-weight:400}
 .wc-section{height:100%;display:flex;flex-direction:column;justify-content:center;gap:12px;padding:48px 80px;background:color-mix(in srgb,var(--wc-accent) 7%,var(--wc-surface));}
 .wc-section h2{margin:0;font-size:36px;font-weight:500}.wc-section p{margin:0;font:17px/1.6 system-ui,sans-serif;opacity:.75;max-width:640px}
-.wc-box{height:100%;padding:16px;border-radius:14px;border:1px dashed color-mix(in srgb,var(--wc-ink) 22%,transparent);font:15px system-ui,sans-serif;}
-.wc-item{flex:1;min-width:0;min-height:56px;display:flex;align-items:center;justify-content:center;padding:14px;border-radius:10px;background:color-mix(in srgb,var(--wc-primary) 10%,var(--wc-surface));border:1px solid color-mix(in srgb,var(--wc-primary) 25%,transparent);text-align:center;}
-.wc-box-absolute .wc-item{position:absolute;width:46%;height:46%;box-shadow:0 10px 24px -14px rgba(0,0,0,.4);}
+.wc-box{border-radius:14px;}
+.wc-editor .wc-box{outline:1px dashed color-mix(in srgb,var(--wc-ink) 28%,transparent);outline-offset:-1px;}
+.wc-flow{position:relative!important;left:auto!important;top:auto!important;flex:0 0 auto;max-width:100%;}
+.wc-box-grid>.wc-flow{width:auto!important;min-width:0;}
+.wc-box-stack>.wc-flow{max-width:100%;}
+.wc-video{margin:0;height:100%;display:flex;flex-direction:column;gap:8px;}
+.wc-video-frame{flex:1;width:100%;min-height:0;border:0;border-radius:14px;background:#000;object-fit:cover;display:block;}
+.wc-video-empty{flex:1;display:grid;place-items:center;border-radius:14px;background:linear-gradient(135deg,var(--wc-ink),color-mix(in srgb,var(--wc-primary) 60%,var(--wc-ink)));color:var(--wc-surface);font-size:42px;}
+.wc-video figcaption{font:13px system-ui,sans-serif;opacity:.6;}
 @media (max-width:1024px){.wc-hero{padding:36px}.wc-hero h1{font-size:52px}.wc-nav{gap:16px;padding:0 24px}.wc-heading{padding:40px 24px 16px}}
-@media (max-width:640px){.wc-hero{padding:24px;gap:18px}.wc-hero h1{font-size:36px;overflow-wrap:anywhere}.wc-hero p{font-size:16px}.wc-nav{padding:0 16px;gap:12px}.wc-nav ul{display:none}.wc-brand{margin-right:auto}.wc-heading{font-size:28px}.wc-cards,.wc-pricing{padding:20px;gap:10px;grid-template-columns:1fr}.wc-card,.wc-plan{padding:18px}.wc-quote,.wc-form,.wc-section{padding:24px}.wc-footer{padding:16px;gap:12px;flex-wrap:wrap}.wc-box-flex{flex-direction:column!important}.wc-box-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media (max-width:640px){.wc-hero{padding:24px;gap:18px}.wc-hero h1{font-size:36px;overflow-wrap:anywhere}.wc-hero p{font-size:16px}.wc-nav{padding:0 16px;gap:12px}.wc-nav ul{display:none}.wc-brand{margin-right:auto}.wc-heading{font-size:28px}.wc-cards,.wc-pricing{padding:20px;gap:10px;grid-template-columns:1fr}.wc-card,.wc-plan{padding:18px}.wc-quote,.wc-form,.wc-section{padding:24px}.wc-footer{padding:16px;gap:12px;flex-wrap:wrap}.wc-box-flex{flex-direction:column!important;height:auto!important;min-height:100%}.wc-box-flex>.wc-flow{width:100%!important}.wc-box-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
 `;
 
 // Per-block design overrides (stored as "s.<key>" properties on the node).
