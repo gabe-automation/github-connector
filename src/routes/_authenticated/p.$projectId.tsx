@@ -33,7 +33,10 @@ import { SITE_TEMPLATES, templateViews, type SiteTemplate } from "@/lib/siteTemp
 import { SitePreview } from "@/components/SitePreview";
 import { openSandboxed, downloadSiteZip } from "@/lib/sandbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { isContainer, type BoxOpts } from "@/lib/blocks";
+import { isContainer, isFlow, absolutizeMedia, type BoxOpts } from "@/lib/blocks";
+import { snippetsFor, type SnippetKind } from "@/lib/snippets";
+import { DeployDialog } from "@/components/editor/DeployDialog";
+import { Rocket, Upload } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/p/$projectId")({
   head: () => ({
@@ -161,6 +164,7 @@ function EditorPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [hostOpen, setHostOpen] = useState(false);
+  const [deployOpen, setDeployOpen] = useState(false);
   const heldRef = useRef<{ id: string; label: string } | null>(null);
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   useEffect(() => {
@@ -227,7 +231,8 @@ function EditorPage() {
     const pageW = BREAKPOINTS.desktop.width;
     const boundW = parent ? parent.geo.desktop.w : pageW;
     const boundH = parent ? parent.geo.desktop.h : Infinity;
-    const w = copy ? copy.geo.desktop.w : Math.min(def.w, boundW);
+    const flowW = parent && isFlow(parent.type) ? (parent.type === "flex" && (parent.box.dir ?? "row") === "row" ? Math.min(def.w, Math.max(120, Math.round((boundW - 32) / 3))) : boundW - 32) : boundW;
+    const w = copy ? copy.geo.desktop.w : Math.min(def.w, flowW);
     const h = copy ? copy.geo.desktop.h : Math.min(def.h, boundH);
     const lowest = siblings.reduce((m, v) => Math.max(m, v.geo.desktop.y + v.geo.desktop.h), 0);
     const G = prefs.grid;
@@ -238,7 +243,7 @@ function EditorPage() {
     const extra: Record<string, unknown> = {};
     if (copy) {
       extra["text"] = copy.text; extra["sub"] = copy.sub; extra["label"] = copy.label; extra["href"] = copy.href;
-      extra["attrs"] = copy.attrs; extra["script"] = copy.script;
+      extra["attrs"] = copy.attrs; extra["script"] = copy.script; extra["html"] = copy.html; extra["css"] = copy.css;
       for (const [k, v] of Object.entries(copy.box)) extra[`c.${k}`] = v;
       for (const [k, v] of Object.entries(copy.style)) extra[`s.${k}`] = v;
     }
@@ -336,9 +341,9 @@ function EditorPage() {
   const siteUrl = typeof window !== "undefined" ? `${window.location.origin}/site/${projectId}` : "";
   function previewSite() {
     if (page?.kind !== "canvas") { toast.info("Open a design page to preview it."); return; }
-    const data = JSON.stringify(sitePages).replace(/</g, "\\u003c");
+    const data = JSON.stringify(Object.fromEntries(Object.entries(sitePages).map(([k, v]) => [k, absolutizeMedia(v, window.location.origin)]))).replace(/</g, "\\u003c");
     const handler = `<script>var pages=${data};function navigatePage(e){var a=e.target.closest('a[href^="?page="]');if(!a)return;var id=a.getAttribute('href').slice(6);if(pages[id]){e.preventDefault();document.open();document.write(pages[id]);document.close();document.addEventListener('click',navigatePage)}}document.addEventListener('click',navigatePage)</script>`;
-    const html = singleHtml().replace('</body>', `${handler}</body>`);
+    const html = absolutizeMedia(singleHtml().replace('</body>', `${handler}</body>`), window.location.origin);
     if (!openSandboxed(html, info?.project?.name ?? "Preview")) toast.error("Allow pop-ups to preview");
   }
   async function publishSite() {
@@ -361,19 +366,33 @@ function EditorPage() {
     let order: string | null = views.reduce<string | null>((m, v) => (!m || v.order > m ? v.order : m), null);
     const pageW = BREAKPOINTS.desktop.width;
     const templateNodes = templateViews(t);
-    const jobs = t.blocks.map((b, i) => {
+    const jobs = t.blocks.flatMap((b, i) => {
       const def = BLOCKS[b.type];
+      const pid = crypto.randomUUID();
       const w = Math.min(b.w ?? def.w, pageW), h = b.h ?? def.h;
-      const geometry = templateNodes[i]?.geo;
+      const geometry = templateNodes.find((n) => n.id === `${t.id}-${i}-0000-0000-000000000000`)?.geo;
       order = keyBetween(order, null);
-      return room.op(crypto.randomUUID(), {
+      const kidJobs = (b.kids ?? []).map((k) => {
+        const kd = BLOCKS[k.type];
+        order = keyBetween(order, null);
+        const kg = { x: k.x ?? 0, y: k.y, w: k.w ?? kd.w, h: k.h ?? kd.h };
+        return room.op(crypto.randomUUID(), {
+          type: k.type, parent: pid, page: page.id, order, deleted: false,
+          ...Object.fromEntries((["desktop", "tablet", "mobile"] as const).flatMap((bp2) => Object.entries(kg).map(([kk, v]) => [`${kk}@${bp2}`, v]))),
+          text: k.text ?? kd.text, sub: k.sub ?? kd.sub, label: k.label ?? kd.label, href: k.href ?? "", attrs: k.attrs ?? {},
+          html: k.html ?? "", css: k.css ?? "", script: k.script ?? "",
+          ...Object.fromEntries(Object.entries(k.style ?? {}).map(([kk, v]) => [`s.${kk}`, v])),
+        }, "created", `${kd.name} (${t.name} template)`);
+      });
+      return [room.op(pid, {
         type: b.type, parent: null, page: page.id, order, deleted: false,
         "x@desktop": b.x ?? Math.round((pageW - w) / 2), "y@desktop": base + b.y, "w@desktop": w, "h@desktop": h,
         ...Object.fromEntries((["tablet", "mobile"] as const).flatMap((bp) => geometry ? Object.entries(geometry[bp]).map(([k, v]) => [`${k}@${bp}`, k === "y" ? base + v : v]) : [])),
         text: b.text ?? def.text, sub: b.sub ?? def.sub, label: b.label ?? def.label, href: b.href ?? "", attrs: b.attrs ?? {},
         ...Object.fromEntries(Object.entries(b.style ?? {}).map(([k, v]) => [`s.${k}`, v])),
         ...Object.fromEntries(Object.entries(b.box ?? {}).map(([k, v]) => [`c.${k}`, v])),
-      }, "created", `${def.name} (${t.name} template)`);
+        html: b.html ?? "", css: b.css ?? "", script: b.script ?? "",
+      }, "created", `${def.name} (${t.name} template)`), ...kidJobs];
     });
     const results = await Promise.all(jobs);
     if (results.some((r) => r !== "applied" && r !== "duplicate")) toast.error("Some template blocks could not be added");
@@ -496,7 +515,9 @@ function EditorPage() {
               </>
             )}
             <div className="border-t pt-3">
-              <Button size="sm" variant="outline" className="w-full" onClick={() => setHostOpen(true)}><Server className="size-4" /> Host on Hostinger, GoDaddy…</Button>
+              <p className="mb-2 text-xs text-muted-foreground">Or put it on your own free hosting account:</p>
+              <Button size="sm" className="mb-2 w-full" onClick={() => setDeployOpen(true)}><Rocket className="size-4" /> One-click deploy · Netlify or Vercel</Button>
+              <Button size="sm" variant="outline" className="w-full" onClick={() => setHostOpen(true)}><Server className="size-4" /> Hostinger, GoDaddy & others (ZIP)</Button>
             </div>
           </PopoverContent>
         </Popover>
@@ -589,6 +610,9 @@ function EditorPage() {
                   onStyle={(k, v) => room.op(sel.id, { [`s.${k}`]: v ?? null }, "styled", labelOf(sel))}
                   onAttrs={(a) => room.op(sel.id, { attrs: a }, "set attributes on", labelOf(sel))}
                   onScript={(js) => room.op(sel.id, { script: js }, "edited logic of", labelOf(sel))}
+                  onHtml={(v) => room.op(sel.id, { html: v }, "edited HTML of", labelOf(sel))}
+                  onCss={(v) => room.op(sel.id, { css: v }, "edited CSS of", labelOf(sel))}
+                  projectId={projectId}
                   onBox={(k, v) => room.op(sel.id, { [`c.${k}`]: v ?? null }, "changed layout of", labelOf(sel))}
                   onGeo={(g) => commitGeo(sel.id, g, "resized")}
                   onFront={() => {
@@ -784,7 +808,16 @@ function EditorPage() {
                   cursors={room.cursors} pageId={page.id} drags={room.drags} readOnly={readOnly} prefs={prefs} locks={room.locks} canOverride={canOverride} onSelect={select} onCommit={commitGeo}
                   onLiveDrag={(id, g, done) => room.sendDrag({ id, bp, ...g, done })}
                   onCursor={(x, y) => room.sendCursor(x, y, page.id)}
-                  onDropBlock={(t, x, y, parentId) => addBlock(t, { x, y }, undefined, parentId)} />
+                  onDropBlock={(t, x, y, parentId) => addBlock(t, { x, y }, undefined, parentId)}
+                  onReorder={(id, beforeId) => {
+                    const n = views.find((v) => v.id === id);
+                    if (!n) return;
+                    const sibs = views.filter((v) => v.parent === n.parent && v.id !== id).sort((a, b) => (a.order < b.order ? -1 : 1));
+                    const idx = beforeId ? sibs.findIndex((v) => v.id === beforeId) : sibs.length;
+                    const prev = sibs[idx - 1]?.order ?? null;
+                    const next = idx < sibs.length ? sibs[idx]!.order : null;
+                    room.op(id, { order: keyBetween(prev, next) }, "reordered", labelOf(n));
+                  }} />
               </>
             )}
           </main>
@@ -806,6 +839,7 @@ function EditorPage() {
           </div>
         </DialogContent>
       </Dialog>
+      <DeployDialog open={deployOpen} onOpenChange={setDeployOpen} projectId={projectId} name={info?.project?.name ?? "site"} pages={sitePages} homeId={firstCanvas} />
       <HostingDialog open={hostOpen} onOpenChange={setHostOpen} siteUrl={siteUrl} published={!!published}
         onZip={(host) => downloadSiteZip(sitePages, firstCanvas, info?.project?.name ?? "site", host)} />
     </div>
@@ -922,6 +956,9 @@ function Inspector(props: {
   onStyle: (k: keyof BlockStyle, v: unknown) => void;
   onAttrs: (a: Record<string, string>) => void;
   onScript: (js: string) => void;
+  onHtml: (v: string) => void;
+  onCss: (v: string) => void;
+  projectId: string;
   onBox: (k: keyof BoxOpts, v: unknown) => void;
   onGeo: (g: Geo) => void;
   onFront: () => void;
@@ -1000,8 +1037,11 @@ function Inspector(props: {
       {isContainer(node.type) && node.type !== "section" && (
         <BoxPanel type={node.type} box={node.box} disabled={disabled} onBox={props.onBox} />
       )}
-      <AttrsPanel key={`attrs-${node.id}`} node={node} disabled={disabled} onAttrs={props.onAttrs} />
-      <LogicPanel key={`js-${node.id}-${node.script.length}`} node={node} disabled={disabled} onScript={props.onScript} />
+      {["image", "hero", "video"].includes(node.type) && (
+        <MediaPanel key={`media-${node.id}`} node={node} projectId={props.projectId} disabled={disabled} onAttrs={props.onAttrs} />
+      )}
+      <AttrsPanel key={`attrs-${node.id}-${JSON.stringify(node.attrs).length}`} node={node} disabled={disabled} onAttrs={props.onAttrs} />
+      <SnippetsPanel key={`snip-${node.id}`} node={node} disabled={disabled} onScript={props.onScript} onHtml={props.onHtml} onCss={props.onCss} />
       <div className="space-y-3">
         <Label className="block">Style</Label>
         {color("bg", "Background")}
@@ -1219,75 +1259,7 @@ function TeamPanel(props: {
   );
 }
 
-const SNIPPETS: { name: string; code: string }[] = [
-  { name: "Required field", code: `input.required = true;\ninput.addEventListener("blur", () => {\n  el.querySelector(".wc-field-msg").textContent = input.value.trim() ? "" : "This field is required";\n});` },
-  { name: "Email check", code: `input.addEventListener("input", () => {\n  const ok = /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(input.value);\n  input.setCustomValidity(ok ? "" : "Enter a valid email");\n  el.querySelector(".wc-field-msg").textContent = ok || !input.value ? "" : "Enter a valid email";\n});` },
-  { name: "Min length", code: `input.addEventListener("input", () => {\n  const short = input.value.length > 0 && input.value.length < 8;\n  el.querySelector(".wc-field-msg").textContent = short ? "Use at least 8 characters" : "";\n});` },
-  { name: "Click message", code: `el.addEventListener("click", () => {\n  alert("Thanks for clicking!");\n});` },
-  { name: "Save to browser", code: `input.value = localStorage.getItem(input.name) || "";\ninput.addEventListener("input", () => localStorage.setItem(input.name, input.value));` },
-];
-
-function AttrsPanel({ node, disabled, onAttrs }: { node: NodeView; disabled: boolean; onAttrs: (a: Record<string, string>) => void }) {
-  const [rows, setRows] = useState<[string, string][]>(() => Object.entries(node.attrs));
-  const commit = (r: [string, string][]) => {
-    const o: Record<string, string> = {};
-    for (const [k, v] of r) if (k.trim()) o[k.trim()] = v;
-    if (JSON.stringify(o) !== JSON.stringify(node.attrs)) onAttrs(o);
-  };
-  const presets: [string, string][] = node.type === "input"
-    ? [["type", "email"], ["name", "email"], ["required", ""], ["minlength", "8"], ["maxlength", "120"], ["pattern", "[A-Za-z ]+"], ["autocomplete", "email"]]
-    : [["aria-label", ""], ["title", ""], ["data-track", "cta"], ["role", "region"]];
-  return (
-    <div className="space-y-2 border-t pt-4">
-      <Label>Attributes</Label>
-      <p className="text-xs text-muted-foreground">{node.type === "input" ? "Set the input type, name, required, length limits or a pattern." : "Added to this block's element in the published site."} Event handlers go in Logic below.</p>
-      {rows.map(([k, v], i) => (
-        <div key={i} className="flex gap-1">
-          <Input aria-label="Attribute name" disabled={disabled} value={k} placeholder="name" className="h-8 flex-1 font-mono text-xs"
-            onChange={(e) => setRows((r) => r.map((x, j) => (j === i ? [e.target.value, x[1]] : x)))} onBlur={() => commit(rows)} />
-          <Input aria-label="Attribute value" disabled={disabled} value={v} placeholder="value" className="h-8 flex-1 font-mono text-xs"
-            onChange={(e) => setRows((r) => r.map((x, j) => (j === i ? [x[0], e.target.value] : x)))} onBlur={() => commit(rows)} />
-          <Button size="icon" variant="ghost" className="size-8" disabled={disabled} aria-label="Remove attribute" onClick={() => { const r = rows.filter((_, j) => j !== i); setRows(r); commit(r); }}><X className="size-3.5" /></Button>
-        </div>
-      ))}
-      <div className="flex flex-wrap gap-1">
-        {presets.filter(([k]) => !rows.some(([x]) => x === k)).map(([k, v]) => (
-          <button key={k} disabled={disabled} onClick={() => { const r: [string, string][] = [...rows, [k, v]]; setRows(r); commit(r); }}
-            className="rounded-full border px-2 py-0.5 font-mono text-[10px] hover:border-primary disabled:opacity-50">+ {k}</button>
-        ))}
-        <button disabled={disabled} onClick={() => setRows((r) => [...r, ["", ""]])} className="rounded-full border border-dashed px-2 py-0.5 text-[10px] hover:border-primary">+ custom</button>
-      </div>
-    </div>
-  );
-}
-
-function LogicPanel({ node, disabled, onScript }: { node: NodeView; disabled: boolean; onScript: (js: string) => void }) {
-  const [code, setCode] = useState(node.script);
-  const save = (v: string) => { if (v !== node.script) onScript(v); };
-  return (
-    <div className="space-y-2 border-t pt-4">
-      <Label>Logic (JavaScript)</Label>
-      <p className="text-xs text-muted-foreground">Runs on the live site. Use <code className="font-mono">el</code> for this block{node.type === "input" ? <> and <code className="font-mono">input</code> for the field</> : null}. It also appears in the script.js tab.</p>
-      <div className="flex flex-wrap gap-1">
-        {SNIPPETS.filter((x) => node.type === "input" || !x.code.includes("input.")).map((x) => (
-          <button key={x.name} disabled={disabled} onClick={() => { const v = code ? `${code}\n\n${x.code}` : x.code; setCode(v); save(v); }}
-            className="rounded-full border px-2 py-0.5 text-[10px] hover:border-primary disabled:opacity-50">+ {x.name}</button>
-        ))}
-      </div>
-      <textarea value={code} disabled={disabled} spellCheck={false} rows={7} aria-label="Block logic"
-        placeholder={node.type === "input" ? 'input.addEventListener("input", () => {\n  // check input.value\n});' : 'el.addEventListener("click", () => {\n  // do something\n});'}
-        onChange={(e) => setCode(e.target.value)} onBlur={() => save(code)}
-        onKeyDown={(e) => {
-          if (e.key !== "Tab") return;
-          e.preventDefault();
-          const t = e.currentTarget, a = t.selectionStart, b = t.selectionEnd;
-          const v = code.slice(0, a) + "  " + code.slice(b);
-          setCode(v); requestAnimationFrame(() => t.setSelectionRange(a + 2, a + 2));
-        }}
-        className="w-full resize-y rounded-md bg-ink p-2 font-mono text-[11px] leading-relaxed text-paper outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60" />
-    </div>
-  );
-}
+__NEWPANELS__
 
 function BoxPanel({ type, box, disabled, onBox }: { type: BlockType; box: BoxOpts; disabled: boolean; onBox: (k: keyof BoxOpts, v: unknown) => void }) {
   const seg = <K extends keyof BoxOpts>(k: K, label: string, opts: readonly string[], dflt: string) => (

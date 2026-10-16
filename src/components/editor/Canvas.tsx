@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { BLOCK_CSS, BREAKPOINTS, blockHtml, isContainer, styleObj, themeVars, type BlockType, type Breakpoint, type Theme } from "@/lib/blocks";
+import { BLOCK_CSS, BREAKPOINTS, blockHtml, isContainer, isFlow, isPanel, panelCss, sanitizeHtml, scopeCss, styleObj, themeVars, type BlockType, type Breakpoint, type Theme } from "@/lib/blocks";
 import { pageHeight, type Geo, type NodeView } from "@/lib/model";
 import type { Cursor, Lease, NodeLock } from "@/lib/useRoom";
 import { snapGrid, type DragPrefs } from "@/lib/dragPrefs";
@@ -24,7 +24,19 @@ type Props = {
   onLiveDrag: (id: string, g: Geo, done?: boolean) => void;
   onCursor: (x: number, y: number) => void;
   onDropBlock: (type: BlockType, x: number, y: number, parentId?: string) => void;
+  onReorder: (id: string, beforeId: string | null) => void;
 };
+
+/** "a:b;c-d:e" → React style object. */
+export function cssObj(css: string): React.CSSProperties {
+  const o: Record<string, string> = {};
+  for (const part of css.split(";")) {
+    const i = part.indexOf(":");
+    if (i < 1) continue;
+    o[part.slice(0, i).trim().replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())] = part.slice(i + 1).trim();
+  }
+  return o as React.CSSProperties;
+}
 
 const SNAP = 6;
 
@@ -152,6 +164,34 @@ export function Canvas(p: Props) {
     if (nl && !p.canOverride(nl)) return;
     const start = toPage(e);
     const orig = n.geo[p.bp];
+    const flowParent = n.parent && ids.has(n.parent) ? p.nodes.find((m) => m.id === n.parent) : undefined;
+    if (!resizing && flowParent && isFlow(flowParent.type)) {
+      const el = (e.currentTarget as HTMLElement).closest<HTMLElement>("[data-node]")!;
+      const box = el.parentElement!;
+      let dragged = false;
+      const mv = (ev: PointerEvent) => {
+        if (Math.abs(ev.clientX - e.clientX) + Math.abs(ev.clientY - e.clientY) > 4) { dragged = true; el.style.opacity = "0.5"; setDropTarget(flowParent.id); }
+      };
+      const done = (ev: PointerEvent) => {
+        window.removeEventListener("pointermove", mv);
+        window.removeEventListener("pointerup", done);
+        el.style.opacity = "";
+        setDropTarget(null);
+        if (!dragged) return;
+        const row = getComputedStyle(box).flexDirection === "row" && getComputedStyle(box).display === "flex";
+        const grid = getComputedStyle(box).display === "grid";
+        const sibs = [...box.querySelectorAll<HTMLElement>(":scope > [data-node]")].filter((x) => x !== el);
+        const before = sibs.find((s2) => {
+          const r = s2.getBoundingClientRect();
+          if (grid) return ev.clientY < r.top || (ev.clientY <= r.bottom && ev.clientX < r.left + r.width / 2);
+          return row ? ev.clientX < r.left + r.width / 2 : ev.clientY < r.top + r.height / 2;
+        });
+        p.onReorder(n.id, before?.dataset["node"] ?? null);
+      };
+      window.addEventListener("pointermove", mv);
+      window.addEventListener("pointerup", done);
+      return;
+    }
     const parentView = n.parent && ids.has(n.parent) ? p.nodes.find((m) => m.id === n.parent) : undefined;
     const bounds = parentView ? parentView.geo[p.bp] : undefined;
     let last = orig;
@@ -194,29 +234,39 @@ export function Canvas(p: Props) {
     const isSel = p.selected === n.id;
     const kids = childMap.get(n.id) ?? [];
     const container = isContainer(n.type);
+    const panel = isPanel(n.type);
+    const par = n.parent && ids.has(n.parent) ? p.nodes.find((m) => m.id === n.parent) : undefined;
+    const inFlow = !!par && isFlow(par.type);
+    const custom = sanitizeHtml(n.html);
+    const ownStyle = styleObj(n.style) as React.CSSProperties;
     return (
       <div
         key={n.id}
-        className="wc-el group"
+        data-node={n.id}
+        className={`wc-el group${panel ? ` wc-box wc-box-${n.type}` : ""}${inFlow ? " wc-flow" : ""}`}
         style={{
           left: g.x, top: g.y, width: g.w, height: g.h, zIndex: z,
+          ...(panel ? { ...cssObj(panelCss(n.type, n.box)), ...ownStyle } : {}),
           overflow: "visible",
-          cursor: p.readOnly ? "default" : lockedByOther || pinned ? "not-allowed" : "move",
+          cursor: p.readOnly ? "default" : lockedByOther || pinned ? "not-allowed" : inFlow ? "grab" : "move",
           outline: isSel ? "2px solid var(--primary)" : dropTarget === n.id ? "2px dashed var(--primary)" : lockedByOther ? `2px dashed ${lease.holder_color}` : undefined,
           outlineOffset: 2,
           transition: remote ? "left 60ms linear, top 60ms linear" : undefined,
         }}
         onPointerDown={(e) => startDrag(e, n, false)}
       >
-        <div
-          className="pointer-events-none h-full w-full overflow-hidden group-hover:outline group-hover:outline-1 group-hover:outline-[var(--ring)]"
-          style={styleObj(n.style) as React.CSSProperties}
-          dangerouslySetInnerHTML={{ __html: blockHtml(n.type, n, n.id) }}
-        />
-        {container && kids.length === 0 && !n.text.trim() && (
+        {!panel && (
+          <div
+            className="pointer-events-none h-full w-full overflow-hidden group-hover:outline group-hover:outline-1 group-hover:outline-[var(--ring)]"
+            style={ownStyle}
+            dangerouslySetInnerHTML={{ __html: blockHtml(n.type, n, n.id) + custom }}
+          />
+        )}
+        {panel && custom && <div className="pointer-events-none" dangerouslySetInnerHTML={{ __html: custom }} />}
+        {container && kids.length === 0 && (
           <div className="pointer-events-none absolute inset-0 grid place-items-center">
-            <span className="rounded-full border border-dashed border-primary/50 bg-card/80 px-3 py-1 font-sans text-[11px] text-muted-foreground">
-              Drop blocks here
+            <span className="rounded-full border border-dashed border-primary/50 bg-card/80 px-3 py-1 text-center font-sans text-[11px] text-muted-foreground">
+              {n.type === "grid" ? "Drop blocks here · they fill the grid cells" : n.type === "flex" ? "Drop blocks here · they line up in a row" : n.type === "stack" ? "Drop blocks here · they stack top to bottom" : n.type === "absolute" ? "Drop blocks here · place them anywhere inside" : "Drop blocks here"}
             </span>
           </div>
         )}
@@ -249,10 +299,10 @@ export function Canvas(p: Props) {
       className="relative mx-auto origin-top-left"
       style={{ width: pageW * p.scale, height: pageH * p.scale }}
     >
-      <style>{BLOCK_CSS}</style>
+      <style>{BLOCK_CSS + p.nodes.map((n) => scopeCss(n.css, `[data-node="${n.id}"]`)).join("\n")}</style>
       <div
         ref={pageRef}
-        className="wc-page absolute left-0 top-0 origin-top-left shadow-lift"
+        className="wc-page wc-editor absolute left-0 top-0 origin-top-left shadow-lift"
         style={{ width: pageW, height: pageH, transform: `scale(${p.scale})`, ...cssVars(p.theme) }}
         onPointerDown={() => p.onSelect(null)}
         onPointerMove={(e) => { const c = toPage(e); p.onCursor(c.x, c.y); }}
