@@ -183,7 +183,7 @@ export function Canvas(p: Props) {
         const sibs = [...box.querySelectorAll<HTMLElement>(":scope > [data-node]")].filter((x) => x !== el);
         const before = sibs.find((s2) => {
           const r = s2.getBoundingClientRect();
-          if (grid) return ev.clientY < r.top + r.height / 2 && ev.clientY >= r.top - 0 ? ev.clientX < r.left + r.width / 2 : ev.clientY < r.top;
+          if (grid) return ev.clientY < r.top || (ev.clientY <= r.bottom && ev.clientX < r.left + r.width / 2);
           return row ? ev.clientX < r.left + r.width / 2 : ev.clientY < r.top + r.height / 2;
         });
         p.onReorder(n.id, before?.dataset["node"] ?? null);
