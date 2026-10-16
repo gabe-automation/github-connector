@@ -1,4 +1,4 @@
-import { BLOCKS, BLOCK_CSS, BOX_KEYS, BREAKPOINTS, STYLE_KEYS, attrString, blockHtml, type BoxOpts, styleCss, themeVars, esc, type BlockStyle, type BlockType, type Breakpoint, type Theme } from "./blocks";
+import { BLOCKS, BLOCK_CSS, isFlow, isPanel, panelCss, scopeCss, BOX_KEYS, BREAKPOINTS, STYLE_KEYS, attrString, blockHtml, type BoxOpts, styleCss, themeVars, esc, type BlockStyle, type BlockType, type Breakpoint, type Theme } from "./blocks";
 import { val, type Props } from "./crdt";
 
 export type Geo = { x: number; y: number; w: number; h: number };
@@ -15,6 +15,8 @@ export type NodeView = {
   style: BlockStyle;
   attrs: Record<string, string>;
   script: string;
+  html: string;
+  css: string;
   box: BoxOpts;
   geo: Record<Breakpoint, Geo>;
 };
@@ -74,6 +76,8 @@ export function toView(id: string, p: Props): NodeView | null {
     style: styleOf(p),
     attrs: val<Record<string, string>>(p, "attrs", {}) ?? {},
     script: val(p, "script", ""),
+    html: val(p, "html", ""),
+    css: val(p, "css", ""),
     box: boxOf(p),
     geo: { desktop: geoFor(p, "desktop"), tablet: geoFor(p, "tablet"), mobile: geoFor(p, "mobile") },
   };
@@ -94,6 +98,7 @@ const shortId = (id: string) => "n" + id.replace(/-/g, "").slice(0, 8);
 export function generateExport(nodes: NodeView[], theme: Theme, title: string) {
   const sorted = [...nodes].sort((a, b) => a.geo.desktop.y - b.geo.desktop.y || a.geo.desktop.x - b.geo.desktop.x);
   const ids = new Set(nodes.map((n) => n.id));
+  const byId = new Map(nodes.map((n) => [n.id, n] as const));
   const childrenOf = new Map<string, NodeView[]>();
   const topLevel: NodeView[] = [];
   for (const n of sorted) {
@@ -109,8 +114,10 @@ export function generateExport(nodes: NodeView[], theme: Theme, title: string) {
     const kids = (childrenOf.get(n.id) ?? [])
       .map((k) => renderEl(k, indent + "  "))
       .join("\n");
-    const inner = blockHtml(n.type, n, shortId(n.id));
-    return `${indent}<div class="wc-el" id="${shortId(n.id)}"${n.type === "input" ? "" : attrString(n.attrs)}>\n${indent}  ${inner}${kids ? `\n${kids}` : ""}\n${indent}</div>`;
+    const inner = blockHtml(n.type, n, shortId(n.id)) + (n.html.trim() ? `\n${indent}  ${n.html.trim()}` : "");
+    const par = n.parent ? byId.get(n.parent) : undefined;
+    const cls = ["wc-el", isPanel(n.type) ? `wc-box wc-box-${n.type}` : "", par && isFlow(par.type) ? "wc-flow" : ""].filter(Boolean).join(" ");
+    return `${indent}<div class="${cls}" id="${shortId(n.id)}"${n.type === "input" ? "" : attrString(n.attrs)}>${inner ? `\n${indent}  ${inner}` : ""}${kids ? `\n${kids}` : ""}\n${indent}</div>`;
   };
   const body = topLevel.map((n) => renderEl(n, "    ")).join("\n");
   const html = `<!doctype html>
@@ -134,7 +141,7 @@ ${body}
     sorted
       .map((n) => {
         const g = n.geo[bp];
-        return `  #${shortId(n.id)}{${bp === "desktop" ? styleCss(n.style) : ""}left:${g.x}px;top:${g.y}px;width:${g.w}px;height:${g.h}px;z-index:${sorted.indexOf(n) + 1};}`;
+        return `  #${shortId(n.id)}{${bp === "desktop" ? styleCss(n.style) + panelCss(n.type, n.box) : ""}left:${g.x}px;top:${g.y}px;width:${g.w}px;height:${g.h}px;z-index:${sorted.indexOf(n) + 1};}`;
       })
       .join("\n");
   const css = `:root{${themeVars(theme)}}
@@ -143,6 +150,7 @@ body{margin:0;background:var(--wc-surface);}
 ${BLOCK_CSS.trim()}
 .wc-page{width:${BREAKPOINTS.desktop.width}px;min-height:${pageHeight(nodes, "desktop")}px;margin:0 auto;}
 ${rules("desktop")}
+${sorted.map((n) => scopeCss(n.css, "#" + shortId(n.id))).filter(Boolean).join("\n")}
 @media ${BREAKPOINTS.tablet.query}{
   .wc-page{width:${BREAKPOINTS.tablet.width}px;min-height:${pageHeight(nodes, "tablet")}px;}
 ${rules("tablet")}
